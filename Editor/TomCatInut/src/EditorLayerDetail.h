@@ -45,7 +45,7 @@
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
-#include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Editor/ProjectManager.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Scripting/ScriptDiagnosticSink.h"
 #include "TomCat/Scripting/ScriptEngine.h"

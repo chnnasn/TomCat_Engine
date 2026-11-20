@@ -6,9 +6,9 @@
 #include "TomCat/Audio/AudioEngine.h"
 #include "TomCat/Editor/WebEditorSession.h"
 #include "TomCat/Scene/Scene.h"
-#include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Editor/EditorCamera.h"
 #include "TomCat/Renderer/RenderCommand.h"
-#include "WebWindow.h"
+#include "platform/Web/WebWindow.h"
 #include "WebEditorUI.h"
 #include "TomCat/ImGui/ImGuiLayer.h"
 #include <yaml-cpp/yaml.h>

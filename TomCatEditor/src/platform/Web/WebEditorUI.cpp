@@ -163,7 +163,7 @@ void WebEditorUI::OnUpdate(Timestep delta) {
   m_Camera.OnUpdate(delta,m_ViewportHovered && !m_GizmoActive && !m_ViewportState.UIRectDragActive
     && m_ViewportState.ActiveColliderHandle==EditorViewportState::ColliderEditHandle::None
     && !IsSceneOrientationGizmoPointerInside());
-  m_Context->OnUpdateEditor(delta,m_Camera);
+  m_Context->OnUpdateEditor(delta,m_Camera.GetRenderView());
   // Camera aspect belongs to the Game view, not the editor's Scene view.
   m_Context->OnViewportResize(uint32_t(std::max(m_GameSize.x,1.0f)),uint32_t(std::max(m_GameSize.y,1.0f)));
   m_Viewport.RenderSceneCameraOverlay();

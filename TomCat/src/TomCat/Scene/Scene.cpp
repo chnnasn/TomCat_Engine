@@ -4332,22 +4332,22 @@ namespace TomCat {
 			RuntimeUIVisibilityMode::Gameplay);
 	}
 
-	void Scene::OnUpdateEditor(Timestep ts, EditorCamera& camera)
+	void Scene::OnUpdateEditor(Timestep ts, const RenderCameraView& view)
 	{
 		TC_PROFILE_SCOPE("Scene Editor Render");
 		if (!m_RuntimeRunning)
 			UpdateParticlePreviews(*this, m_Registry, ts.GetSeconds());
-		Renderer3D::BeginScene(camera);
+		Renderer3D::BeginScene(view);
 		Render3DComponents(*this, m_Registry, true);
 		Renderer3D::EndScene();
-		Renderer2D::BeginScene(camera);
+		Renderer2D::BeginScene(view);
 
-		Render2DComponents(*this, m_Registry, camera.GetViewProjection(),
+		Render2DComponents(*this, m_Registry, view.ViewProjection,
 			RuntimeUIVisibilityMode::Editor);
 
 		Renderer2D::EndScene();
 		RuntimeUISystem::RenderEditorCanvas(*this, m_Registry,
-			camera.GetViewProjection(),
+			view.ViewProjection,
 			RuntimeUIVisibilityMode::Editor);
 	}
 

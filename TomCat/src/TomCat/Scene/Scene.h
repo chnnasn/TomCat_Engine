@@ -1,11 +1,12 @@
 #pragma once
+#include "TomCat/Core/Base.h"
 #include "TomCat/Core/FrameTask.h"
 #include "entt.hpp"
 #include "TomCat/Core/TimeStep.h"
 #include "TomCat/Core/UUID.h"
 #include "TomCat/Asset/Asset.h"
 #include "TomCat/Project/ProjectSettings.h"
-#include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Renderer/RenderCameraView.h"
 #include "Physics2DEvents.h"
 
 #include <cstdint>
@@ -167,9 +168,9 @@ namespace TomCat {
 		void OnRuntimeStep(bool render = true);
 
 		// Screen-space Canvas content is rendered on its reference-resolution
-		// authoring plane in Scene view, observed by the EditorCamera. Runtime and
+		// authoring plane in Scene view, observed by an editor camera view. Runtime and
 		// Game view rendering continue to map the same content to the real viewport.
-		void OnUpdateEditor(Timestep ts, EditorCamera& camera);
+		void OnUpdateEditor(Timestep ts, const RenderCameraView& view);
 		// Accumulates display-frame time and advances scripts and physics in fixed
 		// increments. Rendering occurs once per display frame unless a headless
 		// runtime explicitly disables it.
@@ -346,14 +347,6 @@ namespace TomCat {
 		friend class SceneContactFilter2D;
 		friend class SceneSerializer;
 		friend class SceneManager;
-		friend class SceneHierarchyPanel;
-		friend class SceneHierarchyTreePanel;
-		friend class SceneInspectorPanel;
-		friend class SceneAuthoringEditorsPanel;
-		friend class EditorViewportHandles;
-		friend class EditorBuildController;
-		friend class EditorProjectSettingsController;
-		friend class EditorLayer;
 		friend class Scripting::ScriptEngine;
 
 	};

@@ -11,7 +11,7 @@
 #include "TomCat/Events/MouseEvent.h"
 #include "TomCat/Project/Project.h"
 #include "TomCat/Renderer/Camera.h"
-#include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Editor/EditorCamera.h"
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/TextShaper.h"
 #include "TomCat/Renderer/Framebuffer.h"
@@ -425,7 +425,7 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		TomCat::RenderCommand::Clear();
 		camera.SetViewportSize(static_cast<float>(targetWidth),
 			static_cast<float>(targetHeight));
-		scene.OnUpdateEditor(TomCat::Timestep(0.0f), camera);
+		scene.OnUpdateEditor(TomCat::Timestep(0.0f), camera.GetRenderView());
 		glFinish();
 		std::vector<uint8_t> pixels(
 			static_cast<size_t>(targetWidth) * targetHeight * 4u);

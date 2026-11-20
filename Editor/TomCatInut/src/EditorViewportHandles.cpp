@@ -4,7 +4,7 @@
 #include "panels/SceneHierarchyPanel.h"
 #include "TomCat/Renderer/Renderer2D.h"
 #include "TomCat/Renderer/RenderCommand.h"
-#include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Editor/EditorCamera.h"
 #include "TomCat/Renderer/Font.h"
 #include "TomCat/Renderer/Model.h"
 #include "TomCat/Scene/Advanced2D.h"
@@ -315,7 +315,7 @@ namespace TomCat {
 		const float previousLineWidth = Renderer2D::GetLineWidth();
 		Renderer2D::SetLineWidth(2.0f);
 		RenderCommand::SetDepthTest(false);
-		Renderer2D::BeginScene(m_Context.Camera);
+		Renderer2D::BeginScene(m_Context.Camera.GetRenderView());
 
 		for (const ColliderDebugShape& shape : shapes)
 		{
@@ -353,7 +353,7 @@ namespace TomCat {
 		std::vector<Entity> cameraEntities;
 		Entity selectedCamera;
 		for (const entt::entity value
-			: m_Context.Scene->m_Registry.view<Transform, C_Camera, ID>())
+			: m_Context.Scene->GetRegistry().view<Transform, C_Camera, ID>())
 		{
 			Entity entity(value, m_Context.Scene.get());
 			if (selected && selected == entity)
@@ -546,9 +546,9 @@ namespace TomCat {
 		const float previousLineWidth = Renderer2D::GetLineWidth();
 		Renderer2D::SetLineWidth(1.5f);
 		RenderCommand::SetDepthTest(false);
-		Renderer2D::BeginScene(m_Context.Camera);
+		Renderer2D::BeginScene(m_Context.Camera.GetRenderView());
 		std::vector<Entity> canvasEntities;
-		for (const entt::entity value : m_Context.Scene->m_Registry.view<Canvas, ID>())
+		for (const entt::entity value : m_Context.Scene->GetRegistry().view<Canvas, ID>())
 		{
 			Entity canvas(value, m_Context.Scene.get());
 			if (!selectedCanvas || selectedCanvas != canvas)

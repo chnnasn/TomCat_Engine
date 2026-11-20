@@ -238,9 +238,9 @@ void main() {
     {
         s = {};
     }
-    void Renderer3D::BeginScene(const EditorCamera &camera)
+    void Renderer3D::BeginScene(const RenderCameraView &view)
     {
-        Begin(camera.GetViewProjection(), camera.GetPosition());
+        Begin(view.ViewProjection, view.Position);
     }
     void Renderer3D::BeginScene(const Camera &camera, const glm::mat4 &transform)
     {

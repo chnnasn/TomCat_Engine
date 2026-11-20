@@ -30,6 +30,7 @@ group ""
 
 include "../TomCat"
 include "../TomCatBuild"
+include "../TomCatEditor"
 include "PhysicsRegression"
 include "SpriteAssetRegression"
 include "ScriptCompilerRegression"

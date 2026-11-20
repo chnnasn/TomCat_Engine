@@ -34,7 +34,7 @@
 #pragma comment(lib, "Shell32.lib")
 #endif
 
-#include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Editor/ProjectManager.h"
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Asset/ContentHash.h"
 #include "TomCat/Asset/SpriteAsset.h"

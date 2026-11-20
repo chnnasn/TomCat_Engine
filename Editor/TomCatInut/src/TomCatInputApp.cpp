@@ -1,5 +1,5 @@
 #include <TomCat.h>
-#include <TomCat/Core/EditorRuntimeBundle.h>
+#include <TomCat/Editor/EditorRuntimeBundle.h>
 #include "EditorStartupWindow.h"
 #include <TomCat/Utils/PathUtils.h>
 #include <yaml-cpp/yaml.h>

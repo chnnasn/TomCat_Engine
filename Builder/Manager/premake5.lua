@@ -20,6 +20,7 @@ project "Manager"
 	
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
+		"%{wks.location}/../TomCatEditor/src",
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.glm}",
 		"%{IncludeDir.entt}"
@@ -36,6 +37,7 @@ project "Manager"
 
 	links
 	{
+		"TomCatEditor",
 		"TomCat",
 		table.unpack(TomCatConsumerLinks)
 

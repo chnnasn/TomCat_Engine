@@ -18,6 +18,7 @@ project "TomCatCLI"
 		"%{wks.location}/../TomCatBuild/src",
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
+		"%{wks.location}/../TomCatEditor/src",
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
@@ -34,7 +35,7 @@ project "TomCatCLI"
 		"../../TomCat/vendor/yaml-cpp/bin/" .. outputdir .. "/yaml-cpp"
 	}
 
-	links { "TomCatBuild", "TomCat", table.unpack(TomCatConsumerLinks) }
+	links { "TomCatBuild", "TomCatEditor", "TomCat", table.unpack(TomCatConsumerLinks) }
 	buildoptions "/utf-8"
 
 	filter "system:windows"

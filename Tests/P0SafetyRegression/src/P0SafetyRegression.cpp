@@ -1,11 +1,11 @@
 #include <TomCat/Core/ApplicationPaths.h>
 #include <TomCat/Core/CrashReporter.h>
-#include <TomCat/Core/EditorRuntimeBundle.h>
+#include <TomCat/Editor/EditorRuntimeBundle.h>
 #include <TomCat/Core/Log.h>
 #include <TomCat/Core/Version.h>
 #include <TomCat/Asset/ContentHash.h>
 #include <TomCat/Asset/SpriteAsset.h>
-#include <TomCat/Project/ProjectManager.h>
+#include <TomCat/Editor/ProjectManager.h>
 #include <TomCat/Renderer/Font.h>
 #include <TomCat/Runtime/RuntimeCompatibility.h>
 #include <TomCat/Scene/SceneSerializer.h>

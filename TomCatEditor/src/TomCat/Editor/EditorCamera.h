@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Camera.h"
+#include "TomCat/Renderer/Camera.h"
+#include "TomCat/Renderer/RenderCameraView.h"
 #include "TomCat/Core/TimeStep.h"
 #include "TomCat/Events/Event.h"
 #include "TomCat/Events/MouseEvent.h"
@@ -52,6 +53,8 @@ namespace TomCat {
 
 		const glm::mat4& GetViewMatrix() const { return m_ViewMatrix; }
 		glm::mat4 GetViewProjection() const { return m_Projection * m_ViewMatrix; }
+		// The view the renderers and Scene::OnUpdateEditor consume.
+		RenderCameraView GetRenderView() const { return { GetViewProjection(), m_Position }; }
 		// Produces an equivalent P/V pair for editor tools that assume a
 		// right-handed camera. The product remains identical to GetViewProjection.
 		void GetRightHandedToolMatrices(glm::mat4& view,

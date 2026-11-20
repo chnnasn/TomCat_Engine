@@ -13,6 +13,7 @@ project "EditorRecoveryRegression"
 	{
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
+		"%{wks.location}/../TomCatEditor/src",
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.Box2D}",
 		"%{IncludeDir.glm}",
@@ -29,7 +30,7 @@ project "EditorRecoveryRegression"
 		"../../TomCat/vendor/yaml-cpp/bin/" .. outputdir .. "/yaml-cpp"
 	}
 
-	links { "TomCat", table.unpack(TomCatConsumerLinks) }
+	links { "TomCatEditor", "TomCat", table.unpack(TomCatConsumerLinks) }
 	buildoptions "/utf-8"
 
 	filter "system:windows"

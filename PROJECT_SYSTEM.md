@@ -11,7 +11,7 @@ Hub 默认在自身 exe 同级创建 `Projects` 和 `Editors`，不依赖启动�
 产品发布版本、Engine Build ID、Project/Scene/Prefab/TCPAK 格式版本、Player Template 和脚本 ABI 版本统一定义在 `TomCat/src/TomCat/Core/Version.h`；C++ 兼容层直接引用这些常量，PowerShell 发布流程通过 `Scripts/VersionTools.ps1` 读取同一文件并拒绝不一致的 Release 版本。
 
 - `Project`：创建、加载、校验、保存及重新加载项目配置。
-- `ProjectManager`：扫描项目、维护 Hub 本地状态，并启动对应版本的 Editor。
+- `ProjectManager`：扫描项目、维护 Hub 本地状态，并启动对应版本的 Editor。属于编辑器侧的 `TomCatEditor` 库（`TomCatEditor/src/TomCat/Editor/`），Player 不链接它。
 - Builder (`Manager.exe`)：项目列表、创建/添加/移除项目和 Editor 版本选择。
 - Editor (`TomCat.exe`)：加载项目、按项目模板配置编辑器，并打开启动场景。
 

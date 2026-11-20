@@ -15,7 +15,7 @@
 
 ## 1. Prefab 关联更新
 
-源码入口：[PrefabArchiveCodec](../TomCat/src/TomCat/Scene/Serialization/PrefabArchiveCodec.cpp)、[EntityArchive](../TomCat/src/TomCat/Scene/Serialization/EntityArchive.h)、[ComponentCodecs](../TomCat/src/TomCat/Scene/Serialization/ComponentCodecs.cpp)、[SceneHistory](../TomCat/src/TomCat/Editor/SceneHistory.cpp)。
+源码入口：[PrefabArchiveCodec](../TomCat/src/TomCat/Scene/Serialization/PrefabArchiveCodec.cpp)、[EntityArchive](../TomCat/src/TomCat/Scene/Serialization/EntityArchive.h)、[ComponentCodecs](../TomCat/src/TomCat/Scene/Serialization/ComponentCodecs.cpp)、[SceneHistory](../TomCatEditor/src/TomCat/Editor/SceneHistory.cpp)。
 
 立项时 CaptureSubtree 按遍历顺序生成 `index + 1` 的 LocalID。它保证单份快照内的身份与引用一致，但不能保证修改模板层级后的身份连续性，因此原方案要求关联更新先解决稳定身份问题。
 

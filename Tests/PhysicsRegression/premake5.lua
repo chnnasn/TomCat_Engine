@@ -18,6 +18,7 @@ project "PhysicsRegression"
 	{
 		"%{wks.location}/../TomCat/vendor/spdlog/include",
 		"%{wks.location}/../TomCat/src",
+		"%{wks.location}/../TomCatEditor/src",
 		"%{wks.location}/../TomCat/vendor",
 		"%{IncludeDir.GLFW}",
 		"%{IncludeDir.Glad}",
@@ -38,6 +39,7 @@ project "PhysicsRegression"
 
 	links
 	{
+		"TomCatEditor",
 		"TomCat",
 		table.unpack(TomCatConsumerLinks)
 	}

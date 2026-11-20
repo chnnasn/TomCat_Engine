@@ -8,7 +8,7 @@
 #include "TomCat/Scene/SceneSerializer.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
-#include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Editor/ProjectManager.h"
 
 #include "TomCat/Math/Math.h"
 #include "TomCat/Asset/TextureArtifact.h"

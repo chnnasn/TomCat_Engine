@@ -1,8 +1,8 @@
 #include "tcpch.h"
 #include "EditorRuntimeBundle.h"
 
-#include "ApplicationPaths.h"
-#include "Version.h"
+#include "TomCat/Core/ApplicationPaths.h"
+#include "TomCat/Core/Version.h"
 #include "TomCat/Asset/ContentHash.h"
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PathUtils.h"

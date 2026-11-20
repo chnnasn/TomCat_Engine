@@ -140,6 +140,16 @@ tc_application(TomCatInut "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/src" Ed
 tc_application(Manager "${CMAKE_CURRENT_SOURCE_DIR}/Builder/Manager/src" Hub "${CMAKE_CURRENT_SOURCE_DIR}/Builder/Manager/Packages")
 tc_application(TomCatPlayer "${CMAKE_CURRENT_SOURCE_DIR}/Player/TomCatPlayer/src" Player "")
 
+# TomCatEditor: editor-side services kept out of the runtime library the Player
+# links. src/platform/Web is built only by Web/CMakeLists.txt.
+set(TC_EDITOR_LIB_SRC "${CMAKE_CURRENT_SOURCE_DIR}/TomCatEditor/src")
+file(GLOB_RECURSE tc_editor_sources CONFIGURE_DEPENDS "${TC_EDITOR_LIB_SRC}/TomCat/*.cpp")
+add_library(tc_editor STATIC ${tc_editor_sources})
+target_include_directories(tc_editor PUBLIC "${TC_EDITOR_LIB_SRC}")
+target_link_libraries(tc_editor PUBLIC TomCat)
+target_link_libraries(TomCatInut PRIVATE tc_editor)
+target_link_libraries(Manager PRIVATE tc_editor)
+
 # TomCatBuild: the cook/build pipeline shared by the Editor and TomCatCLI.
 set(TC_BUILD_SRC "${CMAKE_CURRENT_SOURCE_DIR}/TomCatBuild/src")
 file(GLOB_RECURSE tc_build_sources CONFIGURE_DEPENDS "${TC_BUILD_SRC}/*.cpp")
@@ -148,7 +158,7 @@ target_include_directories(tc_build_tools PUBLIC "${TC_BUILD_SRC}")
 target_link_libraries(tc_build_tools PUBLIC TomCat)
 target_link_libraries(TomCatInut PRIVATE tc_build_tools)
 tc_application(TomCatCLI "${CMAKE_CURRENT_SOURCE_DIR}/Tools/TomCatCLI/src" CLI "${CMAKE_CURRENT_SOURCE_DIR}/Editor/TomCatInut/Packages")
-target_link_libraries(TomCatCLI PRIVATE tc_build_tools)
+target_link_libraries(TomCatCLI PRIVATE tc_build_tools tc_editor)
 
 add_custom_target(tc_managed ALL
     COMMAND "${DOTNET_EXECUTABLE}" build "${CMAKE_CURRENT_SOURCE_DIR}/Managed/TomCat.Managed.slnx"
@@ -174,7 +184,8 @@ if(BUILD_TESTING)
     foreach(test InputRegression SaveDataRegression LinuxPlatformRegression AudioRegression LinuxAudioRegression)
         file(GLOB sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Tests/${test}/src/*.cpp")
         add_executable(${test} ${sources})
-        target_link_libraries(${test} PRIVATE TomCat)
+        # InputRegression and LinuxPlatformRegression test editor-side services.
+        target_link_libraries(${test} PRIVATE tc_editor)
         add_test(NAME ${test} COMMAND ${test})
         set_tests_properties(${test} PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" TIMEOUT 60 ENVIRONMENT "TC_RENDERER=opengl")
     endforeach()

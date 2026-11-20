@@ -191,7 +191,7 @@ foreach ($runtimePackageCopyRequirement in @(
     }
 }
 $runtimeBundleSource = Get-Content -LiteralPath `
-    (Join-Path $repositoryRoot 'TomCat\src\TomCat\Core\EditorRuntimeBundle.cpp') -Raw
+    (Join-Path $repositoryRoot 'TomCatEditor\src\TomCat\Editor\EditorRuntimeBundle.cpp') -Raw
 foreach ($requiredPackageAsset in $requiredPackageAssets) {
     $runtimePackageAssetPath = ('packages/' +
         $requiredPackageAsset.Replace('\', '/')).ToLowerInvariant()

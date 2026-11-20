@@ -22,6 +22,7 @@ add_library(tc_yaml STATIC ${TC_YAML})
 target_include_directories(tc_yaml PUBLIC "${TC_VENDOR}/yaml-cpp/include")
 
 set(TC_SOURCES)
+set(TC_EDITOR_LIB "${TC_ROOT}/TomCatEditor/src")
 foreach(component Core Asset Audio Math Module Project Renderer RHI Runtime Save Scene Scripting Utils)
   file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${TC_SRC}/TomCat/${component}/*.cpp")
   list(APPEND TC_SOURCES ${sources})
@@ -31,8 +32,7 @@ list(REMOVE_ITEM gl_sources
   "${TC_SRC}/platform/OpenGL/OpenGLShader.cpp"
   "${TC_SRC}/platform/OpenGL/OpenGLFramebuffer.cpp"
   "${TC_SRC}/platform/OpenGL/OpenGLContext.cpp")
-list(REMOVE_ITEM TC_SOURCES "${TC_SRC}/TomCat/Renderer/GraphicsContext.cpp"
-  "${TC_SRC}/TomCat/Project/ProjectManager.cpp")
+list(REMOVE_ITEM TC_SOURCES "${TC_SRC}/TomCat/Renderer/GraphicsContext.cpp")
 file(GLOB TC_ASTC "${TC_VENDOR}/astcenc/Source/astcenc_*.cpp")
 file(GLOB_RECURSE TC_ETC "${TC_VENDOR}/etc2comp/EtcLib/*.cpp")
 set_source_files_properties(${TC_ASTC} PROPERTIES COMPILE_DEFINITIONS "ASTCENC_NEON=0;ASTCENC_SVE=0;ASTCENC_SSE=0;ASTCENC_AVX=0;ASTCENC_POPCNT=0;ASTCENC_F16C=0")
@@ -73,11 +73,11 @@ target_link_options(tomcat_player PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORTED_FUNCTIONS=['_malloc','_free','_tc_web_managed_install','_tc_web_player_boot','_tc_web_player_frame','_tc_web_player_resize','_tc_web_player_shutdown','_tc_web_player_error','_tc_web_player_cook','_tc_web_player_cook_sample','_tc_web_player_set_cook_payload','_tc_web_player_clear_cook_payload','_tc_web_player_stats']")
 
 add_executable(tomcat_editor
-  "${TC_SRC}/platform/Web/WebEditor.cpp"
-  "${TC_SRC}/platform/Web/WebEditorUI.cpp"
-  "${TC_SRC}/platform/Web/WebSceneToolbars.cpp"
+  "${TC_EDITOR_LIB}/platform/Web/WebEditor.cpp"
+  "${TC_EDITOR_LIB}/platform/Web/WebEditorUI.cpp"
+  "${TC_EDITOR_LIB}/platform/Web/WebSceneToolbars.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/EditorViewportHandles.cpp"
-  "${TC_SRC}/platform/Web/WebProjectSettingsPanel.cpp"
+  "${TC_EDITOR_LIB}/platform/Web/WebProjectSettingsPanel.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiLayer.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiFonts.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiCallback.cpp"
@@ -95,11 +95,12 @@ add_executable(tomcat_editor
   "${TC_VENDOR}/ImGui/backends/imgui_impl_glfw.cpp"
   "${TC_VENDOR}/ImGui/backends/imgui_impl_opengl3.cpp"
   "${TC_VENDOR}/ImGuizmo/ImGuizmo.cpp"
-  "${TC_SRC}/TomCat/Editor/WebEditorSession.cpp"
-  "${TC_SRC}/TomCat/Editor/SceneHistory.cpp")
+  "${TC_EDITOR_LIB}/TomCat/Editor/WebEditorSession.cpp"
+  "${TC_EDITOR_LIB}/TomCat/Editor/SceneHistory.cpp"
+  "${TC_EDITOR_LIB}/TomCat/Editor/EditorCamera.cpp")
 target_link_libraries(tomcat_editor PRIVATE tc_player_core)
 target_include_directories(tomcat_editor PRIVATE "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src"
-  "${TC_ROOT}/TomCatBuild/src")
+  "${TC_ROOT}/TomCatBuild/src" "${TC_EDITOR_LIB}")
 target_compile_definitions(tomcat_editor PRIVATE IMGUI_IMPL_OPENGL_ES3)
 target_link_options(tomcat_editor PRIVATE ${TC_WEB_LINK_OPTIONS}
   "-sEXPORT_NAME=TomCatEditorModule"
@@ -113,11 +114,11 @@ target_link_options(tomcat_editor PRIVATE ${TC_WEB_LINK_OPTIONS}
 # Box2D archives through the TomCatWeb*Archive properties when publishing the host.
 add_library(tomcat_managed_web_entrypoints STATIC
   "${TC_SRC}/platform/Web/WebPlayer.cpp"
-  "${TC_SRC}/platform/Web/WebEditor.cpp"
-  "${TC_SRC}/platform/Web/WebEditorUI.cpp"
-  "${TC_SRC}/platform/Web/WebSceneToolbars.cpp"
+  "${TC_EDITOR_LIB}/platform/Web/WebEditor.cpp"
+  "${TC_EDITOR_LIB}/platform/Web/WebEditorUI.cpp"
+  "${TC_EDITOR_LIB}/platform/Web/WebSceneToolbars.cpp"
   "${TC_ROOT}/Editor/TomCatInut/src/EditorViewportHandles.cpp"
-  "${TC_SRC}/platform/Web/WebProjectSettingsPanel.cpp"
+  "${TC_EDITOR_LIB}/platform/Web/WebProjectSettingsPanel.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiLayer.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiFonts.cpp"
   "${TC_SRC}/TomCat/ImGui/ImGuiCallback.cpp"
@@ -135,9 +136,10 @@ add_library(tomcat_managed_web_entrypoints STATIC
   "${TC_VENDOR}/ImGui/backends/imgui_impl_glfw.cpp"
   "${TC_VENDOR}/ImGui/backends/imgui_impl_opengl3.cpp"
   "${TC_VENDOR}/ImGuizmo/ImGuizmo.cpp"
-  "${TC_SRC}/TomCat/Editor/WebEditorSession.cpp"
-  "${TC_SRC}/TomCat/Editor/SceneHistory.cpp")
+  "${TC_EDITOR_LIB}/TomCat/Editor/WebEditorSession.cpp"
+  "${TC_EDITOR_LIB}/TomCat/Editor/SceneHistory.cpp"
+  "${TC_EDITOR_LIB}/TomCat/Editor/EditorCamera.cpp")
 target_link_libraries(tomcat_managed_web_entrypoints PUBLIC tc_player_core)
 target_include_directories(tomcat_managed_web_entrypoints PRIVATE
-  "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src" "${TC_ROOT}/TomCatBuild/src")
+  "${TC_VENDOR}" "${TC_ROOT}/Editor/TomCatInut/src" "${TC_ROOT}/TomCatBuild/src" "${TC_EDITOR_LIB}")
 target_compile_definitions(tomcat_managed_web_entrypoints PRIVATE IMGUI_IMPL_OPENGL_ES3)

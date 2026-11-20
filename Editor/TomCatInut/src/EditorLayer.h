@@ -4,7 +4,7 @@
 #include "EditorIcons.h"
 #include "panels/SceneHierarchyPanel.h"
 
-#include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Editor/EditorCamera.h"
 #include "TomCat/Editor/EditorRecoveryService.h"
 #include "TomCat/Editor/SceneHistory.h"
 #include "panels/ContentBrowserPanel.h"
@@ -21,7 +21,7 @@
 #include "EditorProjectSettingsController.h"
 #include <functional>
 #include "TomCat/Project/Project.h"
-#include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Editor/ProjectManager.h"
 #include "TomCat/Project/ProjectSettings.h"
 
 #include <array>

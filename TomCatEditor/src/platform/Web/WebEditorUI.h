@@ -1,7 +1,7 @@
 #pragma once
 #ifdef __EMSCRIPTEN__
 #include "TomCat/Core/Layer.h"
-#include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Editor/EditorCamera.h"
 #include "TomCat/Renderer/Framebuffer.h"
 #include "panels/SceneHierarchyPanel.h"
 #include "panels/ContentBrowserPanel.h"

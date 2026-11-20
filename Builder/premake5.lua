@@ -35,4 +35,5 @@ group "Dependencies"
 group ""
 
 include "../TomCat"
+include "../TomCatEditor"
 include "Manager"

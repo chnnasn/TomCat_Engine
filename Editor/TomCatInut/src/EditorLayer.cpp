@@ -41,7 +41,7 @@
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
-#include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Editor/ProjectManager.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Scripting/ScriptDiagnosticSink.h"
 #include "TomCat/Scripting/ScriptEngine.h"
@@ -90,7 +90,7 @@
 #include "TomCat/Utils/FileSystemUtils.h"
 #include "TomCat/Utils/PlatformUtils.h"
 #include "TomCat/Utils/PathUtils.h"
-#include "TomCat/Project/ProjectManager.h"
+#include "TomCat/Editor/ProjectManager.h"
 #include "TomCat/Scripting/ManagedRuntimeFactory.h"
 #include "TomCat/Scripting/ScriptDiagnosticSink.h"
 #include "TomCat/Scripting/ScriptEngine.h"
@@ -1671,7 +1671,7 @@ namespace TomCat {
 
 		// Update
 		// Scene窗口始终使用EditorCamera渲染
-		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera);
+		m_ActiveScene->OnUpdateEditor(ts, m_EditorCamera.GetRenderView());
 
 		// Editor overlays participate in the same ID attachment as ordinary scene
 		// geometry. Submit them before sampling so thin Camera/Canvas outlines and
@@ -3033,7 +3033,7 @@ namespace TomCat {
 		if (!scene)
 			return false;
 		bool changed = false;
-		for (UUID entityID : scene->m_EntityOrder)
+		for (UUID entityID : scene->GetEntityOrder())
 		{
 			Entity entity = scene->FindEntityByUUID(entityID);
 			if (!entity || !entity.HasComponent<CSharpScripts>())

@@ -159,7 +159,7 @@ namespace TomCat {
 		{
 			if (candidate == 0)
 				return false;
-			const auto view = m_Shared.Context->m_Registry.view<CSharpScripts>();
+			const auto view = m_Shared.Context->GetRegistry().view<CSharpScripts>();
 			for (const entt::entity entityHandle : view)
 			{
 				const auto& existingScripts =

@@ -2,7 +2,7 @@
 
 #include "TomCat/Core/Base.h"
 #include "TomCat/Renderer/Camera.h"
-#include "TomCat/Renderer/EditorCamera.h"
+#include "TomCat/Renderer/RenderCameraView.h"
 #include "TomCat/Renderer/Mesh.h"
 #include "TomCat/Renderer/Texture.h"
 
@@ -43,7 +43,7 @@ namespace TomCat {
 		static void Init();
 		static void Shutdown();
 
-		static void BeginScene(const EditorCamera& camera);
+		static void BeginScene(const RenderCameraView& view);
 		static void BeginScene(const Camera& camera, const glm::mat4& cameraTransform);
 		static void EndScene();
 		static void Flush();
