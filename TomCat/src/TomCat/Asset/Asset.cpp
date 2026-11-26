@@ -68,7 +68,8 @@ namespace TomCat {
 		// Keep type discovery aligned with formats that the P0 importer, cooker and
 		// Player can actually consume end to end. Unsupported containers remain
 		// ordinary files until a decoder/importer is registered for them.
-		if (extension == ".wav" || extension == ".ogg" || extension == ".oga")
+		if (extension == ".wav" || extension == ".ogg" || extension == ".oga"
+			|| extension == ".mp3")
 			return AssetType::Audio;
 		if (extension == ".ttf" || extension == ".otf" || extension == ".ttc")
 			return AssetType::Font;

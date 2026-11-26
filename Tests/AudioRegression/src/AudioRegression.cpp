@@ -1,3 +1,4 @@
+#include <TomCat/Asset/Asset.h>
 #include "TomCat/Audio/AudioClip.h"
 #include "TomCat/Audio/AudioDevice.h"
 #include "TomCat/Audio/AudioEngine.h"
@@ -186,6 +187,39 @@ namespace {
         Require(clip && clip->GetChannels() == 1 && clip->GetSampleRate() == 8000 && clip->GetFrameCount() == 8000, "real Vorbis fixture did not decode");
         bytes.resize(64);
         Require(!TomCat::AudioClip::Decode(bytes, error), "truncated Vorbis fixture was accepted");
+    }
+
+    void TestMp3Fixture() {
+        std::ifstream input(std::filesystem::path(__FILE__).parent_path().parent_path() / "Fixtures/sine-440-mono.mp3", std::ios::binary);
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+        Require(!bytes.empty(), "MP3 fixture is missing");
+        std::string error;
+        auto clip = TomCat::AudioClip::Decode(bytes, error);
+        Require(clip != nullptr, ("real MP3 fixture did not decode: " + error).c_str());
+        // MP3 encoders pad with encoder delay and a final partial frame, so the
+        // frame count is at least the source length and below one extra second.
+        Require(clip->GetChannels() == 1 && clip->GetSampleRate() == 8000
+            && clip->GetFrameCount() >= 8000 && clip->GetFrameCount() < 16000,
+            "MP3 fixture decoded with the wrong format or length");
+        // The 440 Hz sine at amplitude 0.2 must survive decoding: check RMS.
+        const auto& pcm = clip->GetPcmBytes();
+        double sum = 0.0;
+        const size_t samples = pcm.size() / 2;
+        for (size_t index = 0; index < samples; ++index) {
+            int16_t value = 0;
+            std::memcpy(&value, pcm.data() + index * 2, 2);
+            const double normalized = value / 32768.0;
+            sum += normalized * normalized;
+        }
+        const double rms = std::sqrt(sum / std::max<size_t>(samples, 1));
+        Require(rms > 0.08 && rms < 0.2, "MP3 fixture decoded without the expected signal");
+
+        std::vector<uint8_t> truncated(bytes.begin(), bytes.begin() + 8);
+        Require(!TomCat::AudioClip::Decode(truncated, error), "truncated MP3 header was accepted");
+        std::vector<uint8_t> id3Only = { 'I', 'D', '3', 4, 0, 0, 0, 0, 0, 0 };
+        Require(!TomCat::AudioClip::Decode(id3Only, error), "ID3 tag without audio was accepted");
+        Require(TomCat::AssetTypeFromPath("Music/Theme.mp3") == TomCat::AssetType::Audio,
+            ".mp3 files must import as Audio");
     }
 
 	void TestNullDeviceStateMachine()
@@ -719,6 +753,7 @@ int main()
 		TomCat::Log::Init();
 		TestWaveDecode();
 		TestVorbisFixture();
+		TestMp3Fixture();
         TestNullDeviceStateMachine();
 		TestBoundedPcmWaveStreaming();
 		TestSpatializationMath();

@@ -3,6 +3,8 @@
 #define STB_VORBIS_NO_STDIO
 #define STB_VORBIS_NO_PUSHDATA_API
 #include "../../../vendor/stb_vorbis/stb_vorbis.c"
+#define MINIMP3_IMPLEMENTATION
+#include "../../../vendor/minimp3/minimp3.h"
 
 #include <algorithm>
 #include <array>
@@ -48,6 +50,30 @@ namespace TomCat {
 			if (status)
 				*status = value;
 			return {};
+		}
+
+		// An ID3v2 tag ("ID3") or an MPEG audio frame sync (11 set bits) whose
+		// layer field says Layer III. Other headers are left to the WAV parser
+		// so its errors stay specific.
+		bool LooksLikeMp3(std::span<const uint8_t> bytes)
+		{
+			if (bytes.size() >= 10 && bytes[0] == 'I' && bytes[1] == 'D' && bytes[2] == '3')
+				return true;
+			return bytes.size() >= 4 && bytes[0] == 0xFF && (bytes[1] & 0xE0) == 0xE0
+				&& ((bytes[1] >> 1) & 0x03) == 0x01;
+		}
+
+		// Size of a leading ID3v2 tag including its optional footer, or 0.
+		size_t Id3v2Size(std::span<const uint8_t> bytes)
+		{
+			if (bytes.size() < 10 || bytes[0] != 'I' || bytes[1] != 'D' || bytes[2] != '3'
+				|| (bytes[6] | bytes[7] | bytes[8] | bytes[9]) & 0x80)
+				return 0;
+			const size_t body = (static_cast<size_t>(bytes[6]) << 21)
+				| (static_cast<size_t>(bytes[7]) << 14)
+				| (static_cast<size_t>(bytes[8]) << 7) | bytes[9];
+			const size_t footer = (bytes[5] & 0x10) ? 10 : 0;
+			return 10 + body + footer;
 		}
 
 		bool IsWaveExtensibleSubformat(const uint8_t* guid, uint16_t format)
@@ -116,10 +142,75 @@ namespace TomCat {
             if (status) *status = AudioDecodeStatus::Success;
             return clip;
         }
+		if (LooksLikeMp3(bytes))
+		{
+			if (bytes.size() > 256ULL * 1024 * 1024)
+				return Fail(AudioDecodeStatus::LimitExceeded, "MP3 source exceeds 256 MiB",
+					sourceName, error, status);
+			size_t offset = std::min(Id3v2Size(bytes), bytes.size());
+			mp3dec_t decoder;
+			mp3dec_init(&decoder);
+			std::array<mp3d_sample_t, MINIMP3_MAX_SAMPLES_PER_FRAME> block{};
+			Ref<AudioClip> clip;
+			uint64_t decodedFrames = 0;
+			uint32_t skippedBytes = 0;
+			while (offset < bytes.size())
+			{
+				mp3dec_frame_info_t info{};
+				const int remaining = static_cast<int>(std::min<size_t>(
+					bytes.size() - offset, static_cast<size_t>(std::numeric_limits<int>::max())));
+				const int samples = mp3dec_decode_frame(&decoder, bytes.data() + offset,
+					remaining, block.data(), &info);
+				if (info.frame_bytes <= 0)
+					break; // no further frame in the data
+				offset += static_cast<size_t>(info.frame_bytes);
+				if (samples == 0)
+				{
+					// Skipped garbage or a frame decoded only for the bit reservoir.
+					skippedBytes += static_cast<uint32_t>(info.frame_bytes);
+					continue;
+				}
+				if (info.layer != 3)
+					return Fail(AudioDecodeStatus::UnsupportedContainer,
+						"only MPEG Layer III audio is supported", sourceName, error, status);
+				if (!clip)
+				{
+					if (info.channels < 1 || info.channels > 2 || info.hz <= 0
+						|| static_cast<uint32_t>(info.hz) > MaximumSampleRate)
+						return Fail(AudioDecodeStatus::LimitExceeded,
+							"MP3 channel count or sample rate exceeds limits", sourceName, error, status);
+					clip = CreateRef<AudioClip>();
+					clip->m_Channels = static_cast<uint16_t>(info.channels);
+					clip->m_SampleRate = static_cast<uint32_t>(info.hz);
+					clip->m_BitsPerSample = 16;
+					clip->m_BlockAlign = static_cast<uint16_t>(info.channels * 2);
+					clip->m_AverageBytesPerSecond = clip->m_SampleRate * clip->m_BlockAlign;
+				}
+				else if (info.channels != clip->m_Channels
+					|| static_cast<uint32_t>(info.hz) != clip->m_SampleRate)
+					return Fail(AudioDecodeStatus::MalformedData,
+						"MP3 frames change channel count or sample rate", sourceName, error, status);
+				decodedFrames += static_cast<uint64_t>(samples);
+				if (decodedFrames * clip->m_BlockAlign > MaximumDecodedAudioBytes)
+					return Fail(AudioDecodeStatus::LimitExceeded,
+						"MP3 decoded size exceeds limits", sourceName, error, status);
+				const auto* first = reinterpret_cast<const uint8_t*>(block.data());
+				clip->m_PcmBytes.insert(clip->m_PcmBytes.end(), first,
+					first + static_cast<size_t>(samples) * clip->m_BlockAlign);
+			}
+			if (!clip || decodedFrames == 0)
+				return Fail(AudioDecodeStatus::MalformedData,
+					"no decodable MPEG Layer III frames", sourceName, error, status);
+			if (skippedBytes != 0)
+				TC_Core_Trace("{0}: skipped {1} non-audio MP3 bytes",
+					sourceName.empty() ? std::string_view("mp3") : sourceName, skippedBytes);
+			if (status) *status = AudioDecodeStatus::Success;
+			return clip;
+		}
 		if (bytes.size() < 12 || !FourCC(bytes.data(), "RIFF")
 			|| !FourCC(bytes.data() + 8, "WAVE"))
 			return Fail(AudioDecodeStatus::UnsupportedContainer,
-				"expected RIFF/WAVE or Ogg/Vorbis audio", sourceName, error, status);
+				"expected RIFF/WAVE, Ogg/Vorbis or MP3 audio", sourceName, error, status);
 
 		const uint64_t declaredEnd = 8ULL + ReadU32(bytes.data() + 4);
 		if (declaredEnd < 12 || declaredEnd > bytes.size())
