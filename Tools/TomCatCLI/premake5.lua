@@ -46,8 +46,11 @@ project "TomCatCLI"
 			"if not exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\\Circle.tga\" (echo ERROR: Required CLI package asset is missing: Circle.tga & exit /b 1)",
 			"if not exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\\Square.tga\" (echo ERROR: Required CLI package asset is missing: Square.tga & exit /b 1)",
 			"if not exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\\OpenSans-Regular.ttf\" (echo ERROR: Required CLI package asset is missing: OpenSans-Regular.ttf & exit /b 1)",
+			"if not exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\noto\\NotoSansSC-Regular.otf\" (echo ERROR: Required CLI package asset is missing: NotoSansSC-Regular.otf & exit /b 1)",
 			"if not exist \"%{cfg.targetdir}\\Packages\\Resources\\Sprites\\TomCat\" mkdir \"%{cfg.targetdir}\\Packages\\Resources\\Sprites\\TomCat\"",
 			"if not exist \"%{cfg.targetdir}\\Packages\\fonts\\opensans\" mkdir \"%{cfg.targetdir}\\Packages\\fonts\\opensans\"",
+			"if not exist \"%{cfg.targetdir}\\Packages\\fonts\\noto\" mkdir \"%{cfg.targetdir}\\Packages\\fonts\\noto\"",
+			"copy /Y \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\noto\\NotoSansSC-Regular.otf\" \"%{cfg.targetdir}\\Packages\\fonts\\noto\\NotoSansSC-Regular.otf\" > nul",
 			"copy /Y \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\\Circle.tga\" \"%{cfg.targetdir}\\Packages\\Resources\\Sprites\\TomCat\\Circle.tga\" > nul",
 			"copy /Y \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\Resources\\Sprites\\TomCat\\Square.tga\" \"%{cfg.targetdir}\\Packages\\Resources\\Sprites\\TomCat\\Square.tga\" > nul",
 			"copy /Y \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\\OpenSans-Regular.ttf\" \"%{cfg.targetdir}\\Packages\\fonts\\opensans\\OpenSans-Regular.ttf\" > nul"

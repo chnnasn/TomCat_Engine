@@ -56,6 +56,7 @@ function Get-TomCatReleaseDependencies {
         [ordered]@{ Name = 'Etc2Comp'; Version = ''; License = 'Apache-2.0'; Notice = 'TomCat\vendor\etc2comp\LICENSE'; Mode = 'Full' },
         [ordered]@{ Name = 'stb_vorbis'; Version = '1.22'; License = '(MIT OR Unlicense)'; Notice = 'TomCat\vendor\stb_vorbis\stb_vorbis.c'; Mode = 'StbLicense' },
         [ordered]@{ Name = 'minimp3'; Version = 'afb604c'; License = 'CC0-1.0'; Notice = 'TomCat\vendor\minimp3\LICENSE'; Mode = 'Full' },
+        [ordered]@{ Name = 'Noto Sans SC'; Version = '2.004'; License = 'OFL-1.1'; Notice = 'Editor\TomCatInut\Packages\fonts\noto\OFL.txt'; Mode = 'Full' },
         [ordered]@{ Name = 'yaml-cpp'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\yaml-cpp\LICENSE'; Mode = 'Full' },
         [ordered]@{ Name = 'Khronos KHR platform header'; Version = ''; License = 'MIT'; Notice = 'TomCat\vendor\Glad\include\KHR\khrplatform.h'; Mode = 'FirstComment' },
         [ordered]@{ Name = 'Glad generated OpenGL loader'; Version = '0.1.36'; License = 'NOASSERTION'; Notice = ''; Mode = 'None' }

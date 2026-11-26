@@ -20,12 +20,16 @@ namespace TomCat {
 	inline constexpr uint64_t BuiltInSquareSpriteHandleValue = 0x54434D5350520002ULL;
 	inline constexpr uint64_t BuiltInLegacyRuntimeFontHandleValue =
 		0x54434D464E540001ULL;
+	// Noto Sans SC, offered as a ready-made CJK Fallback Font.
+	inline constexpr uint64_t BuiltInCjkFallbackFontHandleValue =
+		0x54434D464E540002ULL;
 
 	[[nodiscard]] inline constexpr bool IsBuiltInAssetHandleValue(uint64_t value)
 	{
 		return value == BuiltInCircleSpriteHandleValue
 			|| value == BuiltInSquareSpriteHandleValue
-			|| value == BuiltInLegacyRuntimeFontHandleValue;
+			|| value == BuiltInLegacyRuntimeFontHandleValue
+			|| value == BuiltInCjkFallbackFontHandleValue;
 	}
 
 	[[nodiscard]] inline bool IsBuiltInAssetHandle(AssetHandle handle)

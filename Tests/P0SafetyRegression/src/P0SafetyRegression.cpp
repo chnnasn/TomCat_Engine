@@ -252,6 +252,7 @@ namespace {
 			{ "Packages/Resources/Sprites/TomCat/Circle.tga", "circle-sprite-" + marker },
 			{ "Packages/Resources/Sprites/TomCat/Square.tga", "square-sprite-" + marker },
 			{ "Packages/fonts/opensans/OpenSans-Regular.ttf", "default-font-" + marker },
+			{ "Packages/fonts/noto/NotoSansSC-Regular.otf", "cjk-fallback-font-" + marker },
 			{ "TomCatCLI.exe", "cli-runtime-" + marker },
 			{ "shaderc_shared.dll", "shader-runtime-" + marker },
 			{ "msvcp140.dll", "msvcp-runtime-" + marker },

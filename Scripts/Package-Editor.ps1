@@ -78,7 +78,8 @@ $packageSource = Resolve-EvbPackageDirectory -SourceDir $SourceDir
 $requiredPackageAssets = @(
     "Resources\Sprites\TomCat\Circle.tga",
     "Resources\Sprites\TomCat\Square.tga",
-    "fonts\opensans\OpenSans-Regular.ttf"
+    "fonts\opensans\OpenSans-Regular.ttf",
+    "fonts\noto\NotoSansSC-Regular.otf"
 )
 foreach ($requiredPackageAsset in $requiredPackageAssets) {
     $requiredPackageAssetPath = Join-Path $packageSource $requiredPackageAsset

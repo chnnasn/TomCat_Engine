@@ -62,7 +62,8 @@ project "PhysicsRegression"
 		links { table.unpack(TomCatConsumerLinksDebug) }
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_sharedd.dll\" \"%{cfg.targetdir}\\\" > nul",
-			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\noto\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\noto\" \"$(OutDir)Packages\\fonts\\noto\\\" > nul"
 		}
 
 	filter "configurations:Release"
@@ -72,7 +73,8 @@ project "PhysicsRegression"
 		links { table.unpack(TomCatConsumerLinksRelease) }
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
-			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\noto\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\noto\" \"$(OutDir)Packages\\fonts\\noto\\\" > nul"
 		}
 
 	filter "configurations:Dist"
@@ -82,5 +84,6 @@ project "PhysicsRegression"
 		links { table.unpack(TomCatConsumerLinksRelease) }
 		postbuildcommands {
 			"if exist \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" copy /Y \"$(ProjectDir)..\\..\\vendor\\VulkanSDK\\Bin\\shaderc_shared.dll\" \"%{cfg.targetdir}\\\" > nul",
-			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul"
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\opensans\" \"$(OutDir)Packages\\fonts\\opensans\\\" > nul",
+			"if exist \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\noto\" xcopy /E /Y /I \"$(ProjectDir)..\\..\\Editor\\TomCatInut\\Packages\\fonts\\noto\" \"$(OutDir)Packages\\fonts\\noto\\\" > nul"
 		}

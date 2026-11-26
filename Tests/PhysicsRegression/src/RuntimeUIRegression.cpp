@@ -612,6 +612,32 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
 		RequireUI(latin && !latin->UsesFallback && chinese && chinese->UsesFallback
 			&& emoji && emoji->UsesFallback,
 			"source, missing CJK, or emoji fallback glyph selection is wrong");
+
+		// The built-in CJK fallback supplies real glyphs for Chinese in a font
+		// chain behind OpenSans, while Latin still comes from OpenSans.
+		const TomCat::BuiltInFontAsset* cjk = TomCat::FindBuiltInFontAsset(
+			TomCat::AssetHandle(TomCat::BuiltInCjkFallbackFontHandleValue));
+		RequireUI(cjk && TomCat::IsBuiltInAssetHandleValue(
+				TomCat::BuiltInCjkFallbackFontHandleValue),
+			"the built-in CJK fallback font is not registered");
+		const std::filesystem::path cjkPath = TomCat::GetBuiltInFontAssetPath(
+			TomCat::AssetHandle(TomCat::BuiltInCjkFallbackFontHandleValue));
+		RequireUI(!cjkPath.empty(), "could not locate the built-in CJK fallback font");
+		const std::vector<uint8_t> builtInCjkBytes = ReadBinary(cjkPath);
+		const std::array<std::span<const uint8_t>, 2> builtInChain = {
+			std::span<const uint8_t>(bytes), std::span<const uint8_t>(builtInCjkBytes) };
+		TomCat::FontAtlasData builtInChained;
+		RequireUI(TomCat::FontAtlasBuilder::Build(builtInChain, requested, builtInChained),
+			"OpenSans + Noto Sans SC chain did not build an atlas");
+		const TomCat::FontGlyph* builtInLatin = builtInChained.Find('T');
+		const TomCat::FontGlyph* builtInChinese = builtInChained.Find(0x4e2d);
+		const TomCat::FontGlyph* builtInChinese2 = builtInChained.Find(0x6587);
+		RequireUI(builtInLatin && builtInLatin->SourceIndex == 0
+			&& builtInChinese && builtInChinese->SourceIndex == 1
+			&& !builtInChinese->IsProceduralFallback && builtInChinese->AlphaCoverage > 0
+			&& builtInChinese2 && builtInChinese2->SourceIndex == 1
+			&& !builtInChinese2->IsProceduralFallback && builtInChinese2->AlphaCoverage > 0,
+			"the built-in CJK fallback did not supply real Chinese glyphs");
 		for (const auto& [codepoint, glyph] : first.Glyphs)
 		{
 			if (glyph.AlphaCoverage == 0)

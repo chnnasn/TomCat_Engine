@@ -161,7 +161,8 @@ $cliPremake = Get-Content -LiteralPath (Join-Path $repositoryRoot 'Tools\TomCatC
 $requiredPackageAssets = @(
     'Resources\Sprites\TomCat\Circle.tga',
     'Resources\Sprites\TomCat\Square.tga',
-    'fonts\opensans\OpenSans-Regular.ttf'
+    'fonts\opensans\OpenSans-Regular.ttf',
+    'fonts\noto\NotoSansSC-Regular.otf'
 )
 foreach ($requiredPackageAsset in $requiredPackageAssets) {
     if ($localPackageScript -notmatch [regex]::Escape($requiredPackageAsset)) {

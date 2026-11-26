@@ -33,9 +33,11 @@ namespace TomCat {
 
 	namespace {
 
-		const std::array<BuiltInFontAsset, 1> kBuiltInFontAssets = {{
+		const std::array<BuiltInFontAsset, 2> kBuiltInFontAssets = {{
 			{ AssetHandle(BuiltInLegacyRuntimeFontHandleValue), "Legacy Runtime",
-				"fonts/opensans/OpenSans-Regular.ttf" }
+				"fonts/opensans/OpenSans-Regular.ttf" },
+			{ AssetHandle(BuiltInCjkFallbackFontHandleValue), "Noto Sans SC (CJK Fallback)",
+				"fonts/noto/NotoSansSC-Regular.otf" }
 		}};
 
 		struct RasterGlyph

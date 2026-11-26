@@ -2990,6 +2990,16 @@ namespace TomCat {
 					};
 					drawFont("Font", component.Font);
 					drawFont("FallbackFont", component.FallbackFont);
+					if (static_cast<uint64_t>(component.FallbackFont)
+						!= BuiltInCjkFallbackFontHandleValue
+						&& ImGui::SmallButton("Use built-in CJK fallback"))
+					{
+						component.FallbackFont = AssetHandle(BuiltInCjkFallbackFontHandleValue);
+						m_Shared.MarkModified();
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("Noto Sans SC: Chinese, Japanese kana and other CJK "
+							"text. Ships only with scenes that use it (about 8 MB).");
 					drawFont("EmojiFont", component.EmojiFont);
 					float fontSize = component.FontSize;
 					if (ImGui::DragFloat("Font Size", &fontSize, 0.25f, 1.0f,

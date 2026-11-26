@@ -533,7 +533,8 @@ namespace TomCat {
 				key.starts_with("packages/playertemplates/win-x64/") ||
 				key == "packages/resources/sprites/tomcat/circle.tga" ||
 				key == "packages/resources/sprites/tomcat/square.tga" ||
-				key == "packages/fonts/opensans/opensans-regular.ttf";
+				key == "packages/fonts/opensans/opensans-regular.ttf" ||
+				key == "packages/fonts/noto/notosanssc-regular.otf";
 		}
 
 		bool HasRequiredRuntimeFiles(const RuntimeManifest& manifest,
@@ -554,7 +555,8 @@ namespace TomCat {
 				"packages/playertemplates/win-x64/template.json",
 				"packages/resources/sprites/tomcat/circle.tga",
 				"packages/resources/sprites/tomcat/square.tga",
-				"packages/fonts/opensans/opensans-regular.ttf"
+				"packages/fonts/opensans/opensans-regular.ttf",
+				"packages/fonts/noto/notosanssc-regular.otf"
 			};
 			for (std::string_view requiredPath : required)
 			{
