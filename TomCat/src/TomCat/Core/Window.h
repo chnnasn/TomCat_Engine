@@ -78,6 +78,12 @@ namespace TomCat {
 
 		//窗口属性
 		virtual void SetTitle(const std::string& title) = 0;
+		// Switches between windowed, borderless (monitor-sized, undecorated) and
+		// exclusive fullscreen at runtime on the window's current monitor.
+		// Leaving a fullscreen mode restores the last windowed position and size.
+		// Returns false when the platform cannot switch; the mode is unchanged.
+		virtual bool SetDisplayMode(WindowDisplayMode mode) { (void)mode; return false; }
+		virtual WindowDisplayMode GetDisplayMode() const { return WindowDisplayMode::Windowed; }
 		virtual void SetEventCallback(const EventCallbackFn& callback) = 0;
 		virtual void SetVSync(bool enabled) = 0;
 		virtual bool IsVSync() const = 0;

@@ -291,6 +291,15 @@ namespace TomCat {
 		if (props.DisplayMode == WindowDisplayMode::Borderless || fitWorkspace)
 			glfwSetWindowPos(m_Window, windowX, windowY);
 
+		m_DisplayMode = props.DisplayMode;
+		m_Resizable = props.Resizable;
+		m_WindowedWidth = static_cast<int>(props.Width);
+		m_WindowedHeight = static_cast<int>(props.Height);
+		if (props.DisplayMode == WindowDisplayMode::Windowed)
+		{
+			glfwGetWindowPos(m_Window, &m_WindowedX, &m_WindowedY);
+			glfwGetWindowSize(m_Window, &m_WindowedWidth, &m_WindowedHeight);
+		}
 		glfwSetWindowUserPointer(m_Window, &m_Data);
 		RefreshNativeMetrics(false);
 		SetVSync(props.VSync);
@@ -640,6 +649,81 @@ namespace TomCat {
 			if (m_Window)
 				glfwSetWindowTitle(m_Window, m_Data.Title.c_str());
 		}
+
+	namespace {
+		// The monitor whose area contains the window centre, so fullscreen opens
+		// where the player put the window rather than always on the primary.
+		GLFWmonitor* MonitorForWindow(GLFWwindow* window)
+		{
+			int x = 0, y = 0, width = 0, height = 0;
+			glfwGetWindowPos(window, &x, &y);
+			glfwGetWindowSize(window, &width, &height);
+			const int centreX = x + width / 2;
+			const int centreY = y + height / 2;
+			int count = 0;
+			GLFWmonitor** monitors = glfwGetMonitors(&count);
+			for (int index = 0; index < count; ++index)
+			{
+				int mx = 0, my = 0;
+				glfwGetMonitorPos(monitors[index], &mx, &my);
+				const GLFWvidmode* mode = glfwGetVideoMode(monitors[index]);
+				if (mode && centreX >= mx && centreX < mx + mode->width
+					&& centreY >= my && centreY < my + mode->height)
+					return monitors[index];
+			}
+			return glfwGetPrimaryMonitor();
+		}
+	}
+
+	bool WindowsWindow::SetDisplayMode(WindowDisplayMode mode)
+	{
+		if (!m_Window)
+			return false;
+		if (mode == m_DisplayMode)
+			return true;
+		if (m_DisplayMode == WindowDisplayMode::Windowed)
+		{
+			glfwGetWindowPos(m_Window, &m_WindowedX, &m_WindowedY);
+			glfwGetWindowSize(m_Window, &m_WindowedWidth, &m_WindowedHeight);
+		}
+		GLFWmonitor* target = MonitorForWindow(m_Window);
+		const GLFWvidmode* video = target ? glfwGetVideoMode(target) : nullptr;
+		if (mode != WindowDisplayMode::Windowed && !video)
+			return false;
+
+		switch (mode)
+		{
+			case WindowDisplayMode::ExclusiveFullscreen:
+				glfwSetWindowMonitor(m_Window, target, 0, 0, video->width,
+					video->height, video->refreshRate);
+				break;
+			case WindowDisplayMode::Borderless:
+			{
+				int mx = 0, my = 0;
+				glfwGetMonitorPos(target, &mx, &my);
+				glfwSetWindowMonitor(m_Window, nullptr, mx, my, video->width,
+					video->height, GLFW_DONT_CARE);
+				glfwSetWindowAttrib(m_Window, GLFW_DECORATED, GLFW_FALSE);
+				glfwSetWindowAttrib(m_Window, GLFW_RESIZABLE, GLFW_FALSE);
+				glfwSetWindowPos(m_Window, mx, my);
+				glfwSetWindowSize(m_Window, video->width, video->height);
+				break;
+			}
+			case WindowDisplayMode::Windowed:
+				glfwSetWindowMonitor(m_Window, nullptr, m_WindowedX, m_WindowedY,
+					std::max(1, m_WindowedWidth), std::max(1, m_WindowedHeight),
+					GLFW_DONT_CARE);
+				glfwSetWindowAttrib(m_Window, GLFW_DECORATED, GLFW_TRUE);
+				glfwSetWindowAttrib(m_Window, GLFW_RESIZABLE,
+					m_Resizable ? GLFW_TRUE : GLFW_FALSE);
+				break;
+		}
+		m_DisplayMode = mode;
+		// Exclusive mode can reset the swap interval on some drivers.
+		SetVSync(m_Data.VSync);
+		RefreshNativeMetrics(true);
+		return true;
+	}
 
 		void WindowsWindow::SetVSync(bool enabled)
 		{

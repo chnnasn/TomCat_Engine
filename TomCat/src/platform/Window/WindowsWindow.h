@@ -37,6 +37,8 @@ namespace TomCat {
 
 		// Window attributes
 		void SetTitle(const std::string& title) override;
+		bool SetDisplayMode(WindowDisplayMode mode) override;
+		WindowDisplayMode GetDisplayMode() const override { return m_DisplayMode; }
 		inline void SetEventCallback(const EventCallbackFn& callback) override { m_Data.EventCallback = callback; }
 		void SetVSync(bool enabled) override;
 		bool IsVSync() const override;
@@ -50,6 +52,11 @@ namespace TomCat {
 		void RefreshNativeMetrics(bool dispatchEvent);
 	private:
 		GLFWwindow* m_Window = nullptr;
+		WindowDisplayMode m_DisplayMode = WindowDisplayMode::Windowed;
+		bool m_Resizable = true;
+		// Windowed placement restored when leaving a fullscreen mode.
+		int m_WindowedX = 100, m_WindowedY = 100;
+		int m_WindowedWidth = 1280, m_WindowedHeight = 720;
 		Scope<GraphicsContext> m_Context;
 
 		struct WindowData
