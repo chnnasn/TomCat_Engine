@@ -1,6 +1,7 @@
 #include "PlayerRuntimeLayer.h"
 
 #include "PlayerCommandLine.h"
+#include <TomCat/Debug/FrameProfiler.h>
 
 #include <TomCat/Scripting/ManagedRuntimeFactory.h>
 #include <TomCat/Scripting/ScriptEngine.h>
@@ -185,6 +186,8 @@ namespace TomCat {
 
 	void PlayerRuntimeLayer::OnAttach()
 	{
+		if (const char* path = std::getenv("TC_PLAYER_FRAME_TRACE"); path && *path)
+			FrameProfiler::Get().SetRecording(true);
 		AssetManager& assets = AssetManager::Get();
 		if (!assets.MountCookedPackage(m_PackagePath))
 		{
@@ -251,6 +254,12 @@ namespace TomCat {
 
 	void PlayerRuntimeLayer::OnDetach()
 	{
+		if (const char* path = std::getenv("TC_PLAYER_FRAME_TRACE"); path && *path)
+		{
+			FrameProfiler::Get().SetRecording(false);
+			if (!FrameProfiler::Get().ExportTrace(path))
+				TC_Core_Warn("Could not export Player frame trace to {0}", path);
+		}
 		if (!m_RenderDiagnosticsPath.empty())
 		{
 			WriteRenderDiagnostics();

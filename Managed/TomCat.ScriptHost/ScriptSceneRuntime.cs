@@ -751,7 +751,7 @@ public sealed class ScriptSceneRuntime : IScriptMutationSink
         ScriptInstance[] batch = _instances.ToArray();
         foreach (ScriptInstance instance in batch)
         {
-            if (!CanDispatch(instance) || instance.Started) continue;
+            if (instance.Started || !CanDispatch(instance)) continue;
             instance.Started = true;
             Invoke(instance, "Start", static behaviour => behaviour.__Start());
         }

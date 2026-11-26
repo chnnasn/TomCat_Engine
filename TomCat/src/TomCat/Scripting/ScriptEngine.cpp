@@ -1966,6 +1966,18 @@ namespace TomCat::Scripting {
 		EntityHandleV1& parent) const
 	{
 		parent = {};
+		if (Scene* scene = GetUnmodifiedSceneForMetadataQuery(entity))
+		{
+			Entity target = scene->FindEntityByUUID(UUID(entity.EntityId));
+			if (!target || !target.HasComponent<Tag>() || !target.HasComponent<Transform>()
+				|| !target.HasComponent<EntityMetadata>())
+				return false;
+			const auto parentIt = scene->m_ParentMap.find(UUID(entity.EntityId));
+			if (parentIt != scene->m_ParentMap.end())
+				parent = { entity.SceneSessionId, static_cast<uint64_t>(parentIt->second),
+					entity.RuntimeGeneration };
+			return true;
+		}
 		const auto snapshot = GetProjectionSnapshot(entity);
 		if (!snapshot || !snapshot->Valid)
 			return false;
@@ -2110,6 +2122,28 @@ namespace TomCat::Scripting {
 	bool ScriptEngine::GetProjectedTransformProperty(const EntityHandleV1& entity,
 		uint32_t propertyId, NativeVector3& value) const
 	{
+		if (Scene* scene = GetUnmodifiedSceneForMetadataQuery(entity))
+		{
+			Entity target = scene->FindEntityByUUID(UUID(entity.EntityId));
+			if (!target || !target.HasComponent<Tag>() || !target.HasComponent<Transform>()
+				|| !target.HasComponent<EntityMetadata>())
+				return false;
+			const auto& transform = target.GetComponent<Transform>();
+			const glm::vec3* field = nullptr;
+			using namespace ComponentIds::TransformProperties;
+			switch (propertyId)
+			{
+				case Translation: field = &transform._Translation; break;
+				case Rotation: field = &transform._Rotation; break;
+				case Scale: field = &transform._Scale; break;
+				case LocalTranslation: field = &transform._LocalTranslation; break;
+				case LocalRotation: field = &transform._LocalRotation; break;
+				case LocalScale: field = &transform._LocalScale; break;
+				default: return false;
+			}
+			value = { field->x, field->y, field->z };
+			return true;
+		}
 		const auto snapshot = GetProjectionSnapshot(entity);
 		if (!snapshot || !snapshot->Valid)
 			return false;
@@ -2452,6 +2486,15 @@ namespace TomCat::Scripting {
 	bool ScriptEngine::GetProjectedActiveSelf(const EntityHandleV1& entity,
 		bool& active) const
 	{
+		if (Scene* scene = GetUnmodifiedSceneForMetadataQuery(entity))
+		{
+			Entity target = scene->FindEntityByUUID(UUID(entity.EntityId));
+			if (!target || !target.HasComponent<Tag>() || !target.HasComponent<Transform>()
+				|| !target.HasComponent<EntityMetadata>())
+				return false;
+			active = target.GetComponent<Tag>().ActiveSelf;
+			return true;
+		}
 		const auto snapshot = GetProjectionSnapshot(entity);
 		if (!snapshot || !snapshot->Valid)
 			return false;

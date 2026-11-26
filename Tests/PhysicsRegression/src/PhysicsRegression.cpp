@@ -6489,15 +6489,22 @@ namespace {
 		{
 			engine.NotifyImmediateMutation();
 			bool alive = false, active = false;
+			EntityHandleV1 ancestor{};
+			NativeVector3 position{};
 			Require(engine.GetProjectedEntityLiveness(target, alive) && alive
 				&& engine.GetProjectedActiveInHierarchy(target, active) && active
+				&& engine.GetProjectedActiveSelf(target, active) && active
+				&& engine.GetProjectedParent(target, ancestor) && ancestor.EntityId == context.EntityId
+				&& engine.GetProjectedTransformProperty(target,
+					TomCat::ComponentIds::TransformProperties::Translation, position)
+				&& position.X == child.GetComponent<TomCat::Transform>()._Translation.x
 				&& engine.FlushDeferredCommands(session),
 				"unmodified query lost liveness or ancestor activity");
 		}
 		const auto direct = engine.GetProjectionStatistics();
 		Require(direct.MetadataSnapshots == before.MetadataSnapshots
 			&& direct.SceneCopies == before.SceneCopies
-			&& direct.UnmodifiedMetadataQueries - before.UnmodifiedMetadataQueries == 16,
+			&& direct.UnmodifiedMetadataQueries - before.UnmodifiedMetadataQueries == 40,
 			"empty lifecycle phases built a full metadata/component snapshot");
 		parent.GetComponent<TomCat::Tag>().ActiveSelf = false;
 		bool alive = false, active = true;
