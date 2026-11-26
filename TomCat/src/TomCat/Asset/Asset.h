@@ -61,6 +61,17 @@ namespace TomCat {
 	// own settings without forcing the registry schema to change.
 	using AssetImportSettings = std::map<std::string, std::string>;
 
+	// Import setting that makes Cook treat the asset as a package root, so it
+	// ships even when no build scene references it (assets loaded only from
+	// C# by handle, for example). Its own dependencies and, for a sprite
+	// atlas, every slice ship with it.
+	inline constexpr const char* AlwaysPackageSettingKey = "AlwaysPackage";
+	[[nodiscard]] inline bool IsAlwaysPackaged(const AssetImportSettings& settings)
+	{
+		const auto found = settings.find(AlwaysPackageSettingKey);
+		return found != settings.end() && found->second == "true";
+	}
+
 	// Importer-owned Sprite slicing data. Rect is expressed in source-image
 	// pixels, Pivot is normalized inside Rect, and Border uses
 	// left/bottom/right/top pixels. Keeping this beside the sub-asset identity

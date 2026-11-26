@@ -1473,6 +1473,31 @@ namespace TomCat {
 		if (!isDirectory && AssetTypeFromPath(target) == AssetType::Texture2D
 			&& ImGui::MenuItem("Sprite Atlas Tools..."))
 			BeginAtlasEditor(target);
+		if (!isDirectory)
+		{
+			// Ship this asset even when no build scene references it.
+			AssetManager& assets = AssetManager::Get();
+			const AssetMetadata* metadata = assets.GetRegistry().GetMetadata(target);
+			const bool packageable = metadata && !metadata->IsMissing
+				&& metadata->Type != AssetType::CSharpScript
+				&& metadata->Type != AssetType::None;
+			const bool always = metadata && IsAlwaysPackaged(metadata->ImportSettings);
+			if (ImGui::MenuItem("Always Package", nullptr, always,
+				packageable && m_ProjectStateWritable))
+			{
+				AssetImportSettings settings = metadata->ImportSettings;
+				if (always)
+					settings.erase(AlwaysPackageSettingKey);
+				else
+					settings[AlwaysPackageSettingKey] = "true";
+				if (!assets.SetImportSettings(metadata->Handle, settings))
+					TC_Core_Error("Could not update Always Package for '{0}'",
+						PathToUTF8(target));
+			}
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("Include this asset in Cook even when no build scene "
+					"references it, e.g. assets C# loads by handle.");
+		}
 		if (ImGui::MenuItem("Delete", nullptr, false, !isRoot))
 			RequestDeleteAsset(target, isDirectory);
 		if (ImGui::MenuItem("Rename", nullptr, false, !isRoot))

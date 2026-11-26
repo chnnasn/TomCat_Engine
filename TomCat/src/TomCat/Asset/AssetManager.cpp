@@ -3601,6 +3601,23 @@ namespace TomCat {
 		for (AssetHandle scene : packageBuildScenes)
 			enqueueAsset(scene);
 		enqueueAsset(packagePlayerSettings.Icon);
+		// Assets marked AlwaysPackage are explicit roots of the closure.
+		for (const AssetMetadata& metadata : registryAssets)
+		{
+			if (!IsAlwaysPackaged(metadata.ImportSettings))
+				continue;
+			if (metadata.IsMissing || metadata.Type == AssetType::None
+				|| metadata.Type == AssetType::CSharpScript
+				|| IsAuthoringOnlyCookPath(metadata.FilePath))
+			{
+				TC_Core_Error("AlwaysPackage asset {0} ('{1}') is missing or cannot ship",
+					static_cast<uint64_t>(metadata.Handle), PathToUTF8(metadata.FilePath));
+				return false;
+			}
+			enqueueAsset(metadata.Handle);
+			for (const AssetSubAsset& child : metadata.SubAssets)
+				enqueueAsset(child.Handle);
+		}
 		// Standalone AssetManager users have no build-scene graph. Preserve that
 		// authoring utility mode by treating its current runtime assets as roots;
 		// project cooks always use the strict enabled-scene dependency closure.

@@ -1642,6 +1642,64 @@ namespace {
 		assets.UnmountCookedPackage();
 	}
 
+	void TestAlwaysPackageAddsUnreferencedRoots()
+	{
+		TemporaryAssetProject environment;
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		Require(assets.Initialize(environment.Assets, environment.Library),
+			"AlwaysPackage AssetManager initialization failed");
+		const TomCat::AssetHandle referenced = TomCat::EnsurePrimitiveSpriteAsset(
+			assets, "Circle");
+		const TomCat::AssetHandle scriptOnly = TomCat::EnsurePrimitiveSpriteAsset(
+			assets, "Square");
+		Require(static_cast<uint64_t>(referenced) != 0 && static_cast<uint64_t>(scriptOnly) != 0,
+			"AlwaysPackage fixtures could not be created");
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->SetSceneName("AlwaysPackage");
+		scene->CreateEntity("Referenced").AddComponent<TomCat::SpriteRenderer>().SpriteHandle = referenced;
+		const std::filesystem::path scenePath = environment.Assets / "AlwaysPackage.tomcat";
+		Require(TomCat::SceneSerializer(scene).Serialize(scenePath),
+			"AlwaysPackage Scene could not be serialized");
+		const TomCat::AssetMetadata* sceneMetadata = assets.Registry().GetMetadata(scenePath);
+		Require(sceneMetadata != nullptr, "AlwaysPackage Scene was not imported");
+		const TomCat::AssetHandle sceneHandle = sceneMetadata->Handle;
+
+		const auto cookContains = [&](const std::filesystem::path& package,
+			TomCat::AssetHandle handle)
+		{
+			std::vector<uint8_t> bytes;
+			return assets.ReadAssetBytes(handle, bytes) && !bytes.empty();
+		};
+
+		const std::filesystem::path before = environment.Root / "Build" / "Before.tcpak";
+		Require(assets.CookToPackage(before, sceneHandle), "Baseline cook failed");
+		assets.Shutdown();
+		Require(assets.MountCookedPackage(before), "Baseline package did not mount");
+		Require(cookContains(before, referenced) && !cookContains(before, scriptOnly),
+			"Without AlwaysPackage an unreferenced asset must not ship");
+		assets.UnmountCookedPackage();
+
+		Require(assets.Initialize(environment.Assets, environment.Library),
+			"AlwaysPackage project could not reopen");
+		const TomCat::AssetMetadata* metadata = assets.Registry().GetMetadata(scriptOnly);
+		Require(metadata != nullptr, "Unreferenced asset metadata is missing");
+		TomCat::AssetImportSettings settings = metadata->ImportSettings;
+		settings[TomCat::AlwaysPackageSettingKey] = "true";
+		Require(assets.SetImportSettings(scriptOnly, settings),
+			"AlwaysPackage setting could not be saved");
+		Require(TomCat::IsAlwaysPackaged(assets.Registry().GetMetadata(scriptOnly)->ImportSettings),
+			"AlwaysPackage setting did not persist");
+
+		const std::filesystem::path after = environment.Root / "Build" / "After.tcpak";
+		Require(assets.CookToPackage(after, sceneHandle), "AlwaysPackage cook failed");
+		assets.Shutdown();
+		Require(assets.MountCookedPackage(after), "AlwaysPackage package did not mount");
+		Require(cookContains(after, referenced) && cookContains(after, scriptOnly),
+			"AlwaysPackage asset must ship without a scene reference");
+		assets.UnmountCookedPackage();
+	}
+
 	void TestAutomaticAtlasSlicingAndPacking()
 	{
 		constexpr uint32_t width = 8;
@@ -2129,6 +2187,7 @@ int main()
 		TestAutomaticAtlasSlicingAndPacking();
 		TestAtlasImportAndCookedSubSprite();
 		TestPixelSizedWholeTextureAuthoringAndCook();
+		TestAlwaysPackageAddsUnreferencedRoots();
 		TestCookRejectsReservedSubAssetDependency();
 		TestCookRejectsConcurrentSubAssetMutation(
 			ConcurrentCookMutation::Graph, "ConcurrentGraph");
