@@ -75,10 +75,12 @@ Sprite.tile_0_0.Border: 0,0,0,0
 
 ### 2.3 音频 / 字体
 
-- 支持 wav / ogg / oga / mp3 规划中（mp3 需要给 AudioImporter 接 minimp3，
-  当前版本先用离线转码成 ogg）。
-- Font：ttf/otf/ttc 直接导入。**没有内置 CJK 回退**：中英混排要给
-  TextRenderer 的 FallbackFont 显式挂一个含 CJK 字形的 ttf。
+- 支持 wav / ogg / oga / mp3。mp3 由内置 minimp3 解码为 PCM，限制与 ogg 相同
+  （单/双声道、≤384 kHz、源文件 ≤256 MiB），不再需要离线转成 ogg。和 ogg 一样
+  整段解码，不支持流式播放。
+- Font：ttf/otf/ttc 直接导入。引擎内置 **Noto Sans SC (CJK Fallback)**：在
+  TextRenderer/UIText 的 FallbackFont 里选它，或点 UIText 检查器里的
+  "Use built-in CJK fallback"。只有被场景引用时才进包（约 8 MB）。
 - 音频句柄 `AudioSource.Clip = AssetRef<AudioAsset>(handle)`；全局没有
   "播放一次" 的静态 API，见 §6.5 的池化模式。
 
@@ -247,15 +249,24 @@ OnCollision/OnTrigger(Enter/Exit)2D → OnDisable → OnDestroy。任何引擎�
 var t = GetComponent<Transform>();          // 缺组件抛异常
 foreach (var c in Entity.Children) ...      // 只能拿子
 World.Find("Name"); World.CreateEntity("N", pos, parent);  // Find 按层级名
+World.Find(name: null, tag: "Enemy", within: root);  // 按 Gameplay Tag / 子树查找
+World.Find<SpriteRenderer>("Door");          // 直接拿组件，省掉 GetComponent
+World.FindAll<AudioSource>(tag: "Sfx"); World.FindWithTag("Coin");
+// 以上都是全场景扫描：在 Start 里查一次并缓存结果
 // 物理
 var hit = Physics2D.Raycast(a, b, mask);     // RaycastHit2D?，用 hit is { } h
 rb.LinearVelocity; rb.ApplyLinearImpulse(v);
 // 协程
-StartCoroutine(IEnum());                     // ★ 只能从"本脚本"的回调里启动
+StartCoroutine(IEnum());                     // 只能从本脚本的回调里启动
+door.StartDetachedCoroutine(door.Open());    // 从别的脚本启动，下一帧以 door 身份执行
 yield return null / Yield.Seconds(s) / Yield.Frames(n) / Yield.While(fn);
 // 音频、输入、存档
 AudioSystem.ApplySnapshot(master, music, sfx, fade, mutedMask, soloMask);
 Input.GetKey(KeyCode.Space);                 // KeyCode=GLFW 码
+Input.SimulateKeyTap(KeyCode.Right, 3);      // 合成输入：无焦点也有效，按住 3 帧
+Application.GetTestArgument("level");        // Player --test-arg level=2
+Application.DisplayMode = DisplayMode.Borderless;  // 运行时切全屏/无边框/窗口
+var v = (a - b) / 2f; v.Normalized; Vector2.Dot(a, b);  // Vector2/3 运算符
 SaveData.Write(slot, doc); SaveData.ReadDocument(slot);
 Application.Quit(0);
 ```
@@ -264,8 +275,12 @@ Application.Quit(0);
 
 - 脚本不是引擎组件，`TryGetComponent<脚本>` 非法 → 搭一个静态注册表
   （`GameState.RegisterScript(name, s)` / `GameState.Script<T>(name)`）。
-- A 脚本想让 B 实体的协程开跑：用一个 pending 标志/队列，由 B 自己的
-  Update 消费（转场、胜利动画都这么做）。
+- A 脚本想让 B 实体的协程开跑：调用 `b.StartDetachedCoroutine(b.Routine())`
+  （即 `ScriptTasks.StartDetached`）。第一步在 B 的下一次任务派发时以 B 的身份
+  执行，随 B 一起停止，不再需要 pending 标志/队列。
+- 委托字段（`public Action OnDie;`）不能序列化，会报 **TCG012**。按提示改成
+  `public event Action OnDie;`、加 `[NonSerialized]` 或改成非 public；要在编辑器
+  里连线，就暴露一个 `public void` 方法。
 - 一次性音效 = 预建 N 个带 AudioSource 的实体做池，设 `Clip` 后 `Play()`。
 
 ### 6.5 Sprite 尺寸语义（重要，与引擎规则强相关）
@@ -282,6 +297,19 @@ Application.Quit(0);
 - 挂在有缩放的父级下，子级 Scale 仍会复合。
 
 ---
+
+## 6.6 像素完美渲染（PixelPerfectCamera2D）
+
+在主相机实体上加 **PixelPerfectCamera2D**（正交相机才生效）：
+
+- `ReferenceWidth` × `ReferenceHeight`：可见的参考像素分辨率（如 320×180）。
+- `PixelsPerUnit`：每世界单位的参考像素数，应与 sprite 的 PPU 一致。
+- `LetterboxColor`：整数缩放后剩余屏幕的黑边颜色。
+
+开启后视野按能放下的最大整数倍缩放（1440×810 窗口、320×180 参考 → 4 倍，
+居中 1280×720），OrthographicSize 被忽略。相机和 sprite/tile 的平移吸附到
+`1/PPU` 网格，UV 内缩百分之一个纹素防止图集缝隙。像素风纹理要同时设
+`filterMode: Nearest`。窗口比参考分辨率还小时按 1 倍显示并裁剪。
 
 ## 7. 后处理与调色板（PostProcess2D）
 
@@ -336,10 +364,11 @@ SFX 池 + 334 句柄的兜底 sprite；level 直接当入口会黑屏无相机�
 
 ### 8.3 资产进包规则（重要）
 
-**cook 只打包场景 YAML 里引用到的句柄**。C# 代码里 `GameAssets.*` 常量引用
-但不出现在任何场景里的资产不会进包——结果就是运行时 LoadTexture 失败 →
-静默不渲染。解法：boot 场景放一组 `SpriteRenderer.Enabled=false` 的
-DEP 实体把这些句柄"报名"。长期方案是给资产加 AlwaysPackage 标记。
+**cook 默认只打包构建场景引用到的句柄**（以及它们的依赖）。只被 C# 用句柄
+加载、不出现在任何场景里的资产，要在 Content Browser 右键勾选
+**Always Package**（即导入设置 `AlwaysPackage: true`）。勾选的资产连同依赖、
+图集的全部切片一起进包；资产缺失或不能进包时 cook 直接报错。不再需要用 boot
+场景里隐藏的 DEP 实体凑依赖。
 
 ---
 
@@ -375,14 +404,23 @@ DEP 实体把这些句柄"报名"。长期方案是给资产加 AlwaysPackage �
 6. 尺寸全错（如 4.8 倍跳变）→ 父级 Scale 复合（§4.1）。
 7. 程序化生成的场景 cook 报 mirrored 不一致 → 浮点没写 float32 精确十进制。
 
-### 9.4 自动化验证怎么做（Windows 坑）
+### 9.4 自动化验证
 
-- 截图：`SetProcessDpiAwareness(2)` + `FindWindow` + `SetWindowPos(HWND_TOPMOST)`
-  再 `ImageGrab.grab`，否则 DPI 缩放置顶失败，截到的是别的窗口。
-- 键盘注入：`keybd_event`/`PostMessage` 在无前台焦点时不生效；自动化
-  走查请在游戏 C# 里加自己的环境变量钩子（如 `TC_E2E_AUTO_LEVEL`），
-  不要依赖系统注入。
-- 相机视野与绘制顺序用 `--render-diag` 的 JSON 对拍，不必再解析日志。
+Player 自带截图和测试钩子，不再需要 ctypes 截屏和系统键盘注入：
+
+```powershell
+TomCatPlayer --package Game.tcpak --headless --fixed-delta 0.0166667 `
+  --test-arg level=2 --screenshot out.png --frames 120 --render-diag diag.json
+```
+
+- `--headless`：渲染到隐藏窗口，不抢焦点、不会被遮挡，也没有 DPI 截图问题。
+- `--screenshot out.png` + `--frames N`：第 N 帧（默认 60）离屏重渲染存 PNG 后退出；
+  失败退出码 8。只写 `--frames N` 就是跑 N 帧后退出。
+- `--fixed-delta s`：每帧固定推进 s 秒，第 N 帧的画面可复现。
+- `--test-arg key[=value]`（可重复）：C# 用 `Application.GetTestArgument(key)` /
+  `HasTestArgument(key)` 读取，取代 `TC_E2E_AUTO_LEVEL` 这类环境变量。
+- 键盘走查用 `Input.SimulateKey` / `SimulateKeyTap`：不依赖窗口焦点，下一帧生效。
+- 相机视野与绘制顺序用 `--render-diag` 的 JSON 对拍。
 
 ---
 
@@ -400,14 +438,14 @@ DEP 实体把这些句柄"报名"。长期方案是给资产加 AlwaysPackage �
 | AudioStreamPlayer | AudioSource 实体（池化 + Bus） |
 | Tween/await | Dynamics 弹簧自实现（f,z,r;k1=z/πf ... 见项目 Scripts/Dynamics.cs）+ 协程 |
 | 用户纹理 + 着色器 palette | PostProcess2D PaletteSwap（黑白红蓝 → 目标四色） |
-| 引擎字体回退 | 自带 FallbackFont 句柄（simhei 等含 CJK 字体） |
+| 引擎字体回退 | FallbackFont 选内置 Noto Sans SC (CJK Fallback) |
+| 像素风 Stretch Mode viewport / 整数缩放 | 相机实体加 PixelPerfectCamera2D（参考分辨率 + PPU），纹理设 `filterMode: Nearest` |
 
 ---
 
 ## 11. 已知限制 / 待改进
 
-- mp3 导入未支持（接 minimp3 + AudioImporter）。
-- `Application.Bridge` 的真全屏还是 stub。
-- Player 无确定性输入/截图 API（见 §9.4）。
+- PixelPerfectCamera2D 只吸附 sprite/tile 的平移；旋转的 sprite、粒子不会落到像素网格上。
+- mp3/ogg 都是整段解码，不支持流式播放。
 - 本文档若与 `TomCat/src/TomCat` 实现冲突，以实现为准（该仓库
   `docs/README.md` 为索引）。

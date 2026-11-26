@@ -339,3 +339,14 @@ GetComponent/AddComponent 当前面向引擎注册组件，不支持任意脚本
 生命周期消息必须保持同步，通过 `Tasks.Run` 启动受跟踪异步工作；后台工作结束后，
 访问引擎对象前显式等待 `Tasks.MainThread`。脚本移除、对象销毁、停止 Play 或脚本故障会取消任务与协程，
 普通禁用不会取消。完整语义见[脚本任务说明](SCRIPT_TASKS.zh-CN.md)。
+
+
+## 自动化、窗口与脚本便利 API
+
+- `Input.SimulateKey(key, pressed)` / `SimulateKeyTap(key, holdFrames)` / `ReleaseSimulatedKeys()`：合成键盘输入，不依赖窗口焦点，失焦也不会被释放，下一帧可见。
+- `Application.GetTestArgument(key)` / `HasTestArgument(key)`：读取 Player 的 `--test-arg key=value`。
+- `Application.DisplayMode` / `TrySetDisplayMode(mode)`：运行时在 `Windowed`、`Borderless`、`ExclusiveFullscreen` 间切换；退出全屏恢复原窗口位置与大小。
+- `World.Find(name, tag, within)`、`World.FindAll(...)`、`World.FindWithTag(tag)`、`World.Find<T>(...)`、`World.FindAll<T>(...)`：按名称、Gameplay Tag 与子树查找，泛型版本直接返回组件。都是全场景扫描，请在 `Start` 中缓存。
+- `ScriptTasks.StartDetached(routine)` / `MonoBehaviour.StartDetachedCoroutine(routine)`：从其他脚本的回调启动本脚本的协程；首步在本脚本的下一次任务派发时以本脚本身份执行。
+- `Vector2`/`Vector3`：`/`、标量左乘、逐分量 `*` `/`、取负、`==`/`!=`、`Length`、`Normalized`、`Dot`、`Distance`、`Lerp`。
+- 序列化字段为委托类型时报 `TCG012`，提示改为 `event`、加 `[NonSerialized]` 或改为非 public；`TCG008` 的消息列出了全部支持的字段类型。

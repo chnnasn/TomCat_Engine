@@ -264,6 +264,10 @@ TCPAK v8 沿用 v7 头和索引，新增保留 Handle UINT64_MAX-1、Type None�
 
 ## Cook 与 Player
 
+Cook 的打包根是启用的构建场景、Player 图标，以及导入设置含 `AlwaysPackage: true` 的资产（Content Browser 右键 **Always Package**）。从这些根出发取完整依赖闭包；`AlwaysPackage` 资产若是 Sprite 图集，所有切片一并进包。标记的资产缺失、是 C# 源码或作者态路径时 Cook 失败，而不是悄悄漏掉。只被 C# 按句柄加载的资产必须这样标记，否则不会进包。
+
+音频导入接受 WAV、Ogg Vorbis 与 MP3（MPEG Layer III，含 ID3v2 标签）；后两者整段解码为 16 位 PCM，限制为单/双声道、≤384 kHz、源 ≤256 MiB、解码后 ≤512 MiB。
+
 TCPAK 只读写 v8，BootManifest 与逐条目 SHA-256 为必需字段。版本常量见 `Version.h`。
 
 Editor 模式下，Registry 可以由 Handle 解析到 `Assets/` 中的源文件，用于导入和预览。

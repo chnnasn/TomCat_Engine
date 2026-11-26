@@ -357,3 +357,14 @@ tracked asynchronous work with `Tasks.Run`, and explicitly await `Tasks.MainThre
 before accessing engine objects after background work. Removing a script, destroying
 its object, stopping Play or a script fault cancels its tasks and coroutines; ordinary
 disable does not. See [script task semantics](SCRIPT_TASKS.zh-CN.md).
+
+
+## Automation, window and script convenience APIs
+
+- `Input.SimulateKey(key, pressed)` / `SimulateKeyTap(key, holdFrames)` / `ReleaseSimulatedKeys()`: synthetic keyboard input that works without window focus, survives focus loss and is visible from the next frame.
+- `Application.GetTestArgument(key)` / `HasTestArgument(key)`: read the Player's `--test-arg key=value` options.
+- `Application.DisplayMode` / `TrySetDisplayMode(mode)`: switch between `Windowed`, `Borderless` and `ExclusiveFullscreen` at runtime; leaving fullscreen restores the windowed placement.
+- `World.Find(name, tag, within)`, `World.FindAll(...)`, `World.FindWithTag(tag)`, `World.Find<T>(...)`, `World.FindAll<T>(...)`: find by name, gameplay tag and subtree; the generic forms return the component. They scan the scene, so cache results in `Start`.
+- `ScriptTasks.StartDetached(routine)` / `MonoBehaviour.StartDetachedCoroutine(routine)`: start a coroutine owned by this script from another script's callback. The first step runs at this script's next task dispatch, as this script.
+- `Vector2`/`Vector3`: `/`, scalar-left `*`, component-wise `*` and `/`, unary `-`, `==`/`!=`, `Length`, `Normalized`, `Dot`, `Distance`, `Lerp`.
+- A serialized field of delegate type reports `TCG012` and suggests `event`, `[NonSerialized]` or a non-public field; `TCG008` now lists every supported field type.
