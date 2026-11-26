@@ -14,6 +14,9 @@
 
 #include "PlayerCommandLine.h"
 #include "PlayerRuntimeLayer.h"
+#ifdef TC_PLATFORM_WINDOWS
+#include "WindowsStartupVideo.h"
+#endif
 
 #include <array>
 #include <cstdlib>
@@ -262,6 +265,23 @@ namespace TomCat {
 					Close(plan.ErrorCode);
 					return;
 				}
+				#ifdef TC_PLATFORM_WINDOWS
+				if (plan.Command.Mode == PlayerCommandMode::Run && plan.CreateWindow && !plan.Command.Headless)
+				{
+					const auto video = plan.PackagePath.parent_path() / "Startup.mp4";
+					TC_Core_Info("Playing startup video: {0}", PathToUTF8(video));
+					const auto result = PlayStartupVideo(static_cast<GLFWwindow*>(GetWindow().GetNativeWindow()), video);
+					if (result != StartupResult::Completed)
+					{
+						if (result == StartupResult::Failed)
+							MessageBoxW(nullptr, L"The startup animation could not be played. Check Startup.mp4 and Windows media support.",
+								L"Startup animation", MB_OK | MB_ICONERROR);
+						Close(result == StartupResult::Closed ? 0 : 7);
+						return;
+					}
+					TC_Core_Info("Startup video completed");
+				}
+#endif
 				const PlayerCommandLine& command = plan.Command;
 				switch (command.Mode)
 				{

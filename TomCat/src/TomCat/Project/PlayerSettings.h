@@ -27,6 +27,7 @@ namespace TomCat {
 		uint32_t Height = 720;
 		PlayerWindowMode WindowMode = PlayerWindowMode::Windowed;
 		bool DefaultIsNativeResolution = false;
+		bool UseCustomStartupVideo = false;
 		bool Resizable = true;
 		bool VSync = true;
 		std::filesystem::path SaveDirectory = "Saves";

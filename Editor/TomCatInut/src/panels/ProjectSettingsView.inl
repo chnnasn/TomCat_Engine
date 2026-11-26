@@ -38,7 +38,7 @@
         };
         ImGui::BeginChild("##ProjectSettingsNavigation", ImVec2(std::max(180.0f,ImGui::GetFontSize()*7.8f), 0), true);
         const char* pages[] = { "Tags and Layers", "Physics 2D", "Player" };
-        const char* terms[] = { "tags layers names", "physics 2d collision matrix", "player product company version icon display width height window vsync directories" };
+        const char* terms[] = { "tags layers names", "physics 2d collision matrix", "player product company version icon startup splash video display width height window vsync directories" };
         for (int page = 0; page < 3; ++page)
             if (matchesSettings(terms[page]) && ImGui::Selectable(pages[page], m_ProjectSettingsPage == page)) m_ProjectSettingsPage = page;
 		ImGui::EndChild();
@@ -252,6 +252,40 @@
 			drawString("Version", m_PlayerVersionBuffer,
 				m_PlayerSettingsDraft.Version);
 
+#ifdef TC_PLATFORM_WINDOWS
+			ImGui::TextUnformatted("Startup Animation");
+			ImGui::TextDisabled("%s", m_PlayerSettingsDraft.UseCustomStartupVideo
+				? "Custom video (ProjectSettings/Startup.mp4)" : "TomCat engine logo");
+			if (ImGui::Button("Choose MP4..."))
+			{
+				const auto selected = FileDialogs::OpenFile("MP4 video (*.mp4)\0*.mp4\0");
+				if (!selected.empty())
+				{
+					const auto destination = m_Layer.m_CurrentProject->GetProjectDirectory() / "ProjectSettings" / "Startup.mp4";
+					const auto temporary = FileSystem::MakeTemporarySiblingPath(destination);
+					std::error_code error;
+					if (!IsPlayableStartupVideo(selected))
+						m_ProjectSettingsError = "Choose an MP4 with a decodable video stream (H.264 recommended).";
+					else if (!std::filesystem::copy_file(selected, temporary, error))
+						m_ProjectSettingsError = "Could not import startup video: " + error.message();
+					else if (FileSystem::InstallTemporaryFileAtomically(temporary, destination, m_ProjectSettingsError))
+					{
+						m_PlayerSettingsDraft.UseCustomStartupVideo = true;
+						PersistPlayerSettingsDraft();
+					}
+					std::filesystem::remove(temporary, error);
+				}
+			}
+			if (m_PlayerSettingsDraft.UseCustomStartupVideo)
+			{
+				ImGui::SameLine();
+				if (ImGui::Button("Use TomCat logo"))
+				{
+					m_PlayerSettingsDraft.UseCustomStartupVideo = false;
+					PersistPlayerSettingsDraft();
+				}
+			}
+#endif
             const AssetMetadata* iconMetadata = AssetManager::Get().GetRegistry().GetMetadata(m_PlayerSettingsDraft.Icon);
             const std::string iconName = iconMetadata ? PathToUTF8(iconMetadata->FilePath.filename()) : "None (Texture2D)";
             if (ImGui::BeginCombo(settingRow("Icon").c_str(), iconName.c_str()))

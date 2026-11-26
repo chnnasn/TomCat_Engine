@@ -22,6 +22,7 @@
 
 #ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
+	#include <platform/Window/WindowsVideoValidation.h>
 #endif
 
 #include <glm/gtc/matrix_transform.hpp>

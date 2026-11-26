@@ -459,4 +459,6 @@ TomCatPlayer --package Game.tcpak --headless --fixed-delta 0.0166667 `
 
 在 Project Settings → Player → Icon 中，选择已导入的 Texture2D，或从资源浏览器将 PNG 等纹理拖到该字段。重新导出后，资源管理器中的 EXE 图标与游戏窗口图标均来自该设置。更换图标只需修改项目设置并重新导出。
 
+Windows 交互式 Player 会在游戏窗口内按原比例播放完整的启动动画，结束后进入首个场景。默认视频取自引擎的 `TomCat_Splash.mp4`。在 Project Settings → Player → Startup Animation 中点 **Choose MP4...** 可导入自定义视频（推荐 H.264 MP4），点 **Use TomCat logo** 可恢复默认。自定义素材保存在项目的 `ProjectSettings/Startup.mp4`，导出时所选视频随游戏放入 `<产品名>_Data/Startup.mp4`。导出器会解码检查视频，缺失或损坏会使本次导出失败。无窗口测试与包校验跳过播放。
+
 在 Project Settings → Player → Display 的 Fullscreen Mode 中可选择 Fullscreen Window（无边框全屏）、Exclusive Fullscreen（独占全屏）、Maximized Window（最大化窗口）或 Windowed（普通窗口）。Default Is Native Resolution 使用显示器当前桌面分辨率；取消勾选后，通过 Default Screen Width 和 Default Screen Height 指定启动分辨率。无边框全屏和最大化窗口按比例呈现固定分辨率，窗口大小由屏幕或桌面工作区决定。独占模式由系统选择支持的显示模式，普通窗口可受系统边框、工作区及后续手动调整影响。

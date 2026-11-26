@@ -787,7 +787,11 @@ namespace TomCat {
 				if (document.empty() || !JsonSyntaxValidator(document).Validate())
 					throw std::runtime_error("Player settings file is not valid JSON");
 				const YAML::Node root = YAML::Load(document);
-				RequireExactMapFields(root, "Player settings document",
+				if (root["useCustomStartupVideo"])
+					RequireExactMapFields(root, "Player settings document", std::array<const char*, 8>{
+						"schemaVersion", "productName", "companyName", "version", "icon",
+						"display", "directories", "useCustomStartupVideo" });
+				else RequireExactMapFields(root, "Player settings document",
 					std::array<const char*, 7>{ "schemaVersion", "productName",
 						"companyName", "version", "icon", "display", "directories" });
 				const uint32_t schemaVersion = root["schemaVersion"].as<uint32_t>();
@@ -812,6 +816,7 @@ namespace TomCat {
 				loaded.CompanyName = root["companyName"].as<std::string>();
 				loaded.Version = root["version"].as<std::string>();
 				loaded.Icon = AssetHandle(root["icon"].as<uint64_t>());
+				loaded.UseCustomStartupVideo = root["useCustomStartupVideo"].as<bool>(false);
 				loaded.Width = display["width"].as<uint32_t>();
 				loaded.Height = display["height"].as<uint32_t>();
 				if (!PlayerWindowModeFromString(
@@ -1093,6 +1098,7 @@ namespace TomCat {
 				<< "  \"companyName\": \"" << EscapeJsonString(normalized.CompanyName) << "\",\n"
 				<< "  \"version\": \"" << EscapeJsonString(normalized.Version) << "\",\n"
 				<< "  \"icon\": " << static_cast<uint64_t>(normalized.Icon) << ",\n"
+				<< "  \"useCustomStartupVideo\": " << (normalized.UseCustomStartupVideo ? "true" : "false") << ",\n"
 				<< "  \"display\": {\n"
 				<< "    \"width\": " << normalized.Width << ",\n"
 				<< "    \"height\": " << normalized.Height << ",\n"

@@ -30,6 +30,7 @@
 #ifdef TC_PLATFORM_WINDOWS
 	#include <Windows.h>
 	#include <bcrypt.h>
+	#include <platform/Window/WindowsVideoValidation.h>
 	#pragma comment(lib, "bcrypt.lib")
 #elif defined(TC_PLATFORM_LINUX)
     #include "platform/Linux/LinuxProcess.h"
@@ -338,7 +339,7 @@ namespace TomCat {
             // The shader compiler is linked statically into the Linux Player.
             return false;
 #else
-            return key == "tomcatlauncher.exe" || key == "assimp-vc143-mt.dll" || key == "shaderc_shared.dll" || key == "msvcp140.dll" ||
+            return key == "startup.mp4" || key == "tomcatlauncher.exe" || key == "assimp-vc143-mt.dll" || key == "shaderc_shared.dll" || key == "msvcp140.dll" ||
                 key == "vcruntime140.dll" || key == "vcruntime140_1.dll";
 #endif
 		}
@@ -445,7 +446,7 @@ namespace TomCat {
 					!hasRuntimeConfig || !hasDeps || !hasHostFxr || !hasCoreClr ||
                     !hasTextureShader || !hasFlatColorShader ||
 #ifdef TC_PLATFORM_WINDOWS
-                    !seen.contains("tomcatlauncher.exe") || !hasShaderCompiler || !seen.contains("msvcp140.dll") ||
+                    !seen.contains("startup.mp4") || !seen.contains("tomcatlauncher.exe") || !hasShaderCompiler || !seen.contains("msvcp140.dll") ||
                     !seen.contains("vcruntime140.dll") || !seen.contains("vcruntime140_1.dll") ||
 #endif
 					hostFxrVersions.size() != 1 || runtimeVersions.size() != 1)
@@ -766,6 +767,18 @@ namespace TomCat {
 				return failStaged("A Player template file changed while it was being staged: '" +
 					PathToUTF8(file.RelativePath) + "'.");
 		}
+#ifdef TC_PLATFORM_WINDOWS
+		const auto video = runtimeRoot / "Startup.mp4";
+		if (request.ProjectInstance->GetPlayerSettings().UseCustomStartupVideo)
+		{
+			const auto source = request.ProjectInstance->GetProjectDirectory() / "ProjectSettings" / "Startup.mp4";
+			std::filesystem::copy_file(source, video, std::filesystem::copy_options::overwrite_existing, error);
+			if (error)
+				return failStaged("Could not stage custom startup video: " + error.message());
+		}
+		if (!IsPlayableStartupVideo(video))
+			return failStaged("Startup.mp4 must contain a readable video stream. Choose an H.264 MP4 in Player settings.");
+#endif
 		AssetManager& assets = AssetManager::Get();
 		bool cooked = false;
 		{
