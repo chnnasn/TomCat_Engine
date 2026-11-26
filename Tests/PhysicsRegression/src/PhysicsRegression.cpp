@@ -6128,19 +6128,23 @@ namespace {
 		Require(first.GetName() == "Shared" && second.GetName() == "Shared (1)"
 			&& unnamed.GetName() == "Entity" && secondUnnamed.GetName() == "Entity (1)",
 			"public creation stopped generating unique names or default names");
-		// Raw authoring Tags can bypass RenameEntity. Preserve the historical
-		// copy behavior that resolves these duplicates/empty names in entity order.
+		// Raw authoring Tags can bypass RenameEntity. Copy resolves duplicate and
+		// empty names among siblings, in entity order; the same name under
+		// different parents is kept, as imported scenes rely on it.
+		auto third = source->CreateEntity("Third");
 		second.GetComponent<TomCat::Tag>()._Tag = first.GetName();
+		third.GetComponent<TomCat::Tag>()._Tag = first.GetName();
 		unnamed.GetComponent<TomCat::Tag>()._Tag.clear();
 		Require(source->SetParent(second, first), "copy fixture parent failed");
 		auto copied = TomCat::Scene::Copy(source);
 		Require(copied && copied->GetEntityOrder() == source->GetEntityOrder(),
 			"Scene copy changed entity identities or creation order");
 		Require(copied->FindEntityByUUID(first.GetUUID()).GetName() == "Shared"
-			&& copied->FindEntityByUUID(second.GetUUID()).GetName() == "Shared (1)"
+			&& copied->FindEntityByUUID(second.GetUUID()).GetName() == "Shared"
+			&& copied->FindEntityByUUID(third.GetUUID()).GetName() == "Shared (1)"
 			&& copied->FindEntityByUUID(unnamed.GetUUID()).GetName() == "Entity"
 			&& copied->FindEntityByUUID(secondUnnamed.GetUUID()).GetName() == "Entity (1)",
-			"Scene copy changed historical duplicate/empty name resolution");
+			"Scene copy must keep names across parents and resolve sibling duplicates/empty names");
 		Require(copied->GetParent(copied->FindEntityByUUID(second.GetUUID())).GetUUID()
 			== first.GetUUID(), "Scene copy changed the parent identity");
 		Require(copied->CreateEntity("Shared").GetName() == "Shared (2)",
