@@ -311,6 +311,13 @@ public unsafe struct NativeApplicationApiV1
 	public uint Size;
 	public delegate* unmanaged[Cdecl]<int, int> RequestExit;
 	public delegate* unmanaged[Cdecl]<int*, int> HasWindow;
+	// Version 2.
+	public delegate* unmanaged[Cdecl]<int*, int> GetDisplayMode;
+	public delegate* unmanaged[Cdecl]<int, int> SetDisplayMode;
+	public delegate* unmanaged[Cdecl]<NativeUtf8View, byte*, uint, uint*, int> GetTestArgument;
+	public delegate* unmanaged[Cdecl]<uint, int, int> InjectKey;
+	public delegate* unmanaged[Cdecl]<uint, uint, int> InjectKeyTap;
+	public delegate* unmanaged[Cdecl]<int> ReleaseInjectedKeys;
 }
 
 [StructLayout(LayoutKind.Sequential)]

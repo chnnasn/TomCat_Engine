@@ -194,6 +194,26 @@ public readonly record struct InputEventBatch(ulong FirstFrameNumber,
 public static unsafe class Input
 {
 	public static bool GetKey(KeyCode key) => IsKeyHeld(key);
+
+	/// <summary>
+	/// Synthetic key press or release for tests and automation. It works
+	/// without window focus, and focus loss does not release it. The change is
+	/// visible from the next frame, exactly like a real key event.
+	/// </summary>
+	public static void SimulateKey(KeyCode key, bool pressed) =>
+		NativeBridge.InputInjectKey(key, pressed);
+
+	/// <summary>
+	/// Presses a key now and releases it automatically after
+	/// <paramref name="holdFrames"/> frames (1-3600), so
+	/// <see cref="GetKeyDown"/> fires on the next frame and
+	/// <see cref="GetKey"/> reads held for that many frames.
+	/// </summary>
+	public static void SimulateKeyTap(KeyCode key, uint holdFrames = 1) =>
+		NativeBridge.InputInjectKeyTap(key, holdFrames);
+
+	/// <summary>Releases every key held by <see cref="SimulateKey"/>.</summary>
+	public static void ReleaseSimulatedKeys() => NativeBridge.InputReleaseInjectedKeys();
     public static bool GetKeyDown(KeyCode key) => WasKeyPressed(key);
     public static bool GetKeyUp(KeyCode key) => WasKeyReleased(key);
     public const uint MaximumGamepads = 16;
@@ -313,6 +333,49 @@ public static class Application
         NativeBridge.ApplicationRequestExit(exitCode);
 
     public static bool HasWindow => NativeBridge.ApplicationHasWindow;
+
+    /// <summary>
+    /// The window's display mode. Setting it switches at runtime on the
+    /// window's current monitor; leaving a fullscreen mode restores the last
+    /// windowed position and size. Throws when there is no window; use
+    /// <see cref="TrySetDisplayMode"/> to handle platforms that cannot switch.
+    /// </summary>
+    public static DisplayMode DisplayMode
+    {
+        get => (DisplayMode)NativeBridge.ApplicationGetDisplayMode();
+        set
+        {
+            if (!TrySetDisplayMode(value))
+                throw new TomCatException($"Display mode {value} is unavailable on this platform.");
+        }
+    }
+
+    /// <summary>Returns false when the window cannot switch to the mode.</summary>
+    public static bool TrySetDisplayMode(DisplayMode mode)
+    {
+        if (!Enum.IsDefined(mode))
+            throw new ArgumentOutOfRangeException(nameof(mode));
+        return NativeBridge.ApplicationSetDisplayMode((int)mode);
+    }
+
+    /// <summary>
+    /// Value of a <c>--test-arg key=value</c> Player option, or null when it
+    /// was not given. Use it for test hooks such as auto-loading a level.
+    /// </summary>
+    public static string? GetTestArgument(string key) =>
+        NativeBridge.ApplicationGetTestArgument(key);
+
+    /// <summary>True when <c>--test-arg key</c> was given with any value.</summary>
+    public static bool HasTestArgument(string key) => GetTestArgument(key) is not null;
+}
+
+public enum DisplayMode
+{
+    Windowed = 0,
+    /// <summary>Undecorated window covering the monitor.</summary>
+    Borderless = 1,
+    /// <summary>Exclusive fullscreen at the monitor's current video mode.</summary>
+    ExclusiveFullscreen = 2,
 }
 
 public static class Log

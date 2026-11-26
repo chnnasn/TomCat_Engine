@@ -8,6 +8,7 @@
 #include "TomCat/Asset/AssetManager.h"
 #include "TomCat/Core/Application.h"
 #include "TomCat/Core/ApplicationPaths.h"
+#include "TomCat/Core/Input.h"
 #include "TomCat/Core/Log.h"
 #include "TomCat/Math/Math.h"
 #include "TomCat/Scene/ComponentRegistry.h"
@@ -737,11 +738,95 @@ namespace TomCat::Scripting {
 			});
 		}
 
+		int32_t ApplicationGetDisplayModeCallback(int32_t* mode) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (!mode) return Code(ScriptStatus::InvalidArgument);
+				Application& application = Application::Get();
+				if (!application.HasWindow()) return Code(ScriptStatus::Unavailable);
+				*mode = static_cast<int32_t>(application.GetWindow().GetDisplayMode());
+				return Code(ScriptStatus::Success);
+			});
+		}
+
+		int32_t ApplicationSetDisplayModeCallback(int32_t mode) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				if (mode < 0 || mode > static_cast<int32_t>(WindowDisplayMode::ExclusiveFullscreen))
+					return Code(ScriptStatus::InvalidArgument);
+				Application& application = Application::Get();
+				if (!application.HasWindow()) return Code(ScriptStatus::Unavailable);
+				return application.GetWindow().SetDisplayMode(
+					static_cast<WindowDisplayMode>(mode))
+					? Code(ScriptStatus::Success) : Code(ScriptStatus::Unavailable);
+			});
+		}
+
+		int32_t ApplicationGetTestArgumentCallback(NativeUtf8View key,
+			uint8_t* buffer, uint32_t capacity, uint32_t* required) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				std::string name;
+				if (!required || !ReadUtf8(key, name) || name.empty())
+					return Code(ScriptStatus::InvalidArgument);
+				const auto& arguments = Application::Get().GetTestArguments();
+				const auto found = arguments.find(name);
+				if (found == arguments.end())
+				{
+					*required = 0;
+					return Code(ScriptStatus::NotFound);
+				}
+				return WriteUtf8(found->second, buffer, capacity, required);
+			});
+		}
+
+		int32_t ApplicationInjectKeyCallback(uint32_t key, int32_t pressed) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				return Input::InjectKey(key, pressed != 0)
+					? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidArgument);
+			});
+		}
+
+		int32_t ApplicationInjectKeyTapCallback(uint32_t key, uint32_t holdFrames) noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				return Input::InjectKeyTap(key, holdFrames)
+					? Code(ScriptStatus::Success) : Code(ScriptStatus::InvalidArgument);
+			});
+		}
+
+		int32_t ApplicationReleaseInjectedKeysCallback() noexcept
+		{
+			return Guard([&]()
+			{
+				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
+				Input::ReleaseInjectedKeys();
+				return Code(ScriptStatus::Success);
+			});
+		}
+
 		NativeApplicationApiV1 BuildApplicationApiV1()
 		{
 			NativeApplicationApiV1 api;
 			api.RequestExit = &ApplicationRequestExitCallback;
 			api.HasWindow = &ApplicationHasWindowCallback;
+			api.GetDisplayMode = &ApplicationGetDisplayModeCallback;
+			api.SetDisplayMode = &ApplicationSetDisplayModeCallback;
+			api.GetTestArgument = &ApplicationGetTestArgumentCallback;
+			api.InjectKey = &ApplicationInjectKeyCallback;
+			api.InjectKeyTap = &ApplicationInjectKeyTapCallback;
+			api.ReleaseInjectedKeys = &ApplicationReleaseInjectedKeysCallback;
 			return api;
 		}
 

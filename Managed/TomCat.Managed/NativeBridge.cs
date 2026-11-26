@@ -623,9 +623,22 @@ internal static unsafe partial class NativeBridge
 				return false;
 		}
 		application = candidate;
-		return application.Version == 1
-			&& application.Size >= (uint)sizeof(NativeApplicationApiV1)
+		// Accept a version 1 host (Quit/HasWindow only); the version 2 entries
+		// stay null there and their callers report the missing capability.
+		const uint version1Size = 8 + 2 * 8;
+		bool valid = application.Version >= 1 && application.Size >= version1Size
 			&& application.RequestExit != null && application.HasWindow != null;
+		if (valid && (application.Version < 2
+			|| application.Size < (uint)sizeof(NativeApplicationApiV1)))
+		{
+			application.GetDisplayMode = null;
+			application.SetDisplayMode = null;
+			application.GetTestArgument = null;
+			application.InjectKey = null;
+			application.InjectKeyTap = null;
+			application.ReleaseInjectedKeys = null;
+		}
+		return valid;
 	}
 
 	private static bool TryReadSaveDataCapability(NativeApiV1* api,
@@ -2076,6 +2089,83 @@ internal static unsafe partial class NativeBridge
 			Check(s_applicationApi.HasWindow(&hasWindow), "Application.HasWindow");
 			return hasWindow != 0;
 		}
+	}
+
+	internal static int ApplicationGetDisplayMode()
+	{
+		EnsureMainThread();
+		RequireApplication(s_applicationApi.GetDisplayMode != null,
+			"Application.DisplayMode");
+		int mode = 0;
+		Check(s_applicationApi.GetDisplayMode(&mode), "Application.DisplayMode");
+		return mode;
+	}
+
+	internal static bool ApplicationSetDisplayMode(int mode)
+	{
+		EnsureMainThread();
+		RequireApplication(s_applicationApi.SetDisplayMode != null,
+			"Application.DisplayMode");
+		int status = s_applicationApi.SetDisplayMode(mode);
+		if (status == NativeUnavailable)
+			return false;
+		Check(status, "Application.DisplayMode");
+		return true;
+	}
+
+	internal static string? ApplicationGetTestArgument(string key)
+	{
+		EnsureMainThread();
+		ArgumentException.ThrowIfNullOrEmpty(key);
+		const string operation = "Application.GetTestArgument";
+		RequireApplication(s_applicationApi.GetTestArgument != null, operation);
+		byte[] name = s_strictUtf8.GetBytes(key);
+		fixed (byte* namePointer = name)
+		{
+			NativeUtf8View view = new(namePointer, (ulong)name.Length);
+			uint required = 0;
+			int probe = s_applicationApi.GetTestArgument(view, null, 0, &required);
+			if (probe == NativeNotFound)
+				return null;
+			if (probe != 0 && probe != NativeBufferTooSmall)
+				Check(probe, operation);
+			if (required > 1024 * 1024)
+				throw new TomCatException($"{operation} returned an invalid length.");
+			if (required == 0)
+				return string.Empty;
+			byte[] bytes = new byte[required];
+			fixed (byte* pointer = bytes)
+			{
+				uint actual = 0;
+				Check(s_applicationApi.GetTestArgument(view, pointer, required, &actual),
+					operation);
+				if (actual != required)
+					throw new TomCatException($"{operation} changed length while being read.");
+			}
+			return s_strictUtf8.GetString(bytes);
+		}
+	}
+
+	internal static void InputInjectKey(KeyCode key, bool pressed)
+	{
+		EnsureMainThread();
+		RequireApplication(s_applicationApi.InjectKey != null, "Input.SimulateKey");
+		Check(s_applicationApi.InjectKey((uint)key, pressed ? 1 : 0), "Input.SimulateKey");
+	}
+
+	internal static void InputInjectKeyTap(KeyCode key, uint holdFrames)
+	{
+		EnsureMainThread();
+		RequireApplication(s_applicationApi.InjectKeyTap != null, "Input.SimulateKeyTap");
+		Check(s_applicationApi.InjectKeyTap((uint)key, holdFrames), "Input.SimulateKeyTap");
+	}
+
+	internal static void InputReleaseInjectedKeys()
+	{
+		EnsureMainThread();
+		RequireApplication(s_applicationApi.ReleaseInjectedKeys != null,
+			"Input.ReleaseSimulatedKeys");
+		Check(s_applicationApi.ReleaseInjectedKeys(), "Input.ReleaseSimulatedKeys");
 	}
 
 	private static void RequireApplication(bool condition, string operation)

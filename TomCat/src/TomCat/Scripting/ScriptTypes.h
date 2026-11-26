@@ -341,15 +341,29 @@ namespace TomCat::Scripting {
 	inline constexpr std::string_view ApplicationCapabilityName =
 		"TomCat.ApplicationApiV1";
 
+	// Version 2 appends display mode, test arguments and synthetic key input.
+	// A version 1 consumer reads only the first two entries.
 	struct NativeApplicationApiV1
 	{
-		uint32_t Version = 1;
+		uint32_t Version = 2;
 		uint32_t Size = sizeof(NativeApplicationApiV1);
 
 		// Requests a clean application shutdown with the caller's exit code.
 		int32_t(TC_SCRIPT_CALL* RequestExit)(int32_t exitCode) = nullptr;
 		// Writes 1 when the process owns a real window, 0 for headless runs.
 		int32_t(TC_SCRIPT_CALL* HasWindow)(int32_t* hasWindow) = nullptr;
+
+		// 0 Windowed, 1 Borderless, 2 ExclusiveFullscreen. Unavailable without
+		// a window or when the platform cannot switch.
+		int32_t(TC_SCRIPT_CALL* GetDisplayMode)(int32_t* mode) = nullptr;
+		int32_t(TC_SCRIPT_CALL* SetDisplayMode)(int32_t mode) = nullptr;
+		// UTF-8 value of a --test-arg key; NotFound when absent.
+		int32_t(TC_SCRIPT_CALL* GetTestArgument)(NativeUtf8View key,
+			uint8_t* buffer, uint32_t capacity, uint32_t* required) = nullptr;
+		// Synthetic keyboard input independent of window focus.
+		int32_t(TC_SCRIPT_CALL* InjectKey)(uint32_t key, int32_t pressed) = nullptr;
+		int32_t(TC_SCRIPT_CALL* InjectKeyTap)(uint32_t key, uint32_t holdFrames) = nullptr;
+		int32_t(TC_SCRIPT_CALL* ReleaseInjectedKeys)() = nullptr;
 	};
 
 	// Optional game save service discovered through NativeApiV2::QueryCapability.
