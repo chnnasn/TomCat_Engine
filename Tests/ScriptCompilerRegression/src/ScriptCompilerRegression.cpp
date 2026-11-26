@@ -570,6 +570,61 @@ namespace {
 			"generated project incorporated a dependency from an external MSBuild file");
 	}
 
+	void TestDelegateFieldDiagnostic()
+	{
+		TemporaryScriptProject environment;
+		TomCat::ProjectConfig config;
+		config.Name = "Delegate Field Regression";
+		config.AssetDirectory = "Assets";
+		const TomCat::Ref<TomCat::Project> project = TomCat::Project::CreateNew(
+			environment.Root / "Project.tcproj", config);
+		Require(project != nullptr, "could not create the delegate field test project");
+
+		const std::filesystem::path scriptPath =
+			project->GetAssetPath() / "Scripts" / "DelegateFieldProbe.cs";
+		WriteTextFile(scriptPath,
+			"using System;\n"
+			"using TomCat;\n"
+			"namespace Regression;\n"
+			"public sealed class DelegateFieldProbe : MonoBehaviour\n"
+			"{\n"
+			"    public Action Died;\n"
+			"}\n");
+
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		Require(assets.SetProject(project),
+			"AssetManager could not open the delegate field test project");
+		TomCat::ScriptProjectCompiler compiler;
+		Require(compiler.Configure(project),
+			"ScriptProjectCompiler configuration failed for the delegate field test");
+		const TomCat::ScriptBuildResult rejected = compiler.CompileNow();
+		Require(!rejected.Succeeded, "script generator accepted a public delegate field");
+		Require(std::any_of(rejected.Diagnostics.begin(), rejected.Diagnostics.end(),
+			[](const TomCat::ScriptCompilerDiagnostic& diagnostic)
+			{
+				return diagnostic.Code == "TCG012"
+					&& diagnostic.Message.find("public event Action Died;") != std::string::npos;
+			}), "public delegate field did not emit TCG012 with the event fix:\n"
+			+ FormatDiagnostics(rejected));
+
+		// Each suggested fix must compile.
+		WriteTextFile(scriptPath,
+			"using System;\n"
+			"using TomCat;\n"
+			"namespace Regression;\n"
+			"public sealed class DelegateFieldProbe : MonoBehaviour\n"
+			"{\n"
+			"    public event Action Died;\n"
+			"    [NonSerialized] public Action<int> Scored;\n"
+			"    private Action _hidden;\n"
+			"    public void Raise() { Died?.Invoke(); Scored?.Invoke(1); _hidden?.Invoke(); }\n"
+			"}\n");
+		const TomCat::ScriptBuildResult accepted = compiler.CompileNow();
+		Require(accepted.Succeeded,
+			"event, [NonSerialized] and private delegates must compile:\n"
+			+ FormatDiagnostics(accepted));
+	}
+
 	void TestAssetRefMarkerValidation()
 	{
 		TemporaryScriptProject environment;
@@ -2425,6 +2480,8 @@ int main(int argc, char** argv)
 		std::cout << "PASS MSBuild/NuGet/local reference injection is blocked\n";
 		TestAssetRefMarkerValidation();
 		std::cout << "PASS AssetRef<T> accepts only built-in asset markers\n";
+		TestDelegateFieldDiagnostic();
+		std::cout << "PASS delegate fields report TCG012 with fixes that compile\n";
 		TestFailedBuildPreservesLastGood();
 		std::cout << "PASS failed C# build preserves last-good\n";
 		TestManagedDependencies();

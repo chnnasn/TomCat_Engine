@@ -12,6 +12,12 @@ public abstract class MonoBehaviour
     public ScriptTasks Tasks { get { EnsureBound(); return _tasks!; } }
 
     public Coroutine StartCoroutine(System.Collections.IEnumerator routine, CancellationToken cancellation = default) => Tasks.StartCoroutine(routine, cancellation);
+    /// <summary>
+    /// Starts a coroutine on this behaviour from another script's callback;
+    /// see <see cref="ScriptTasks.StartDetached"/>.
+    /// </summary>
+    public Coroutine StartDetachedCoroutine(System.Collections.IEnumerator routine,
+        CancellationToken cancellation = default) => Tasks.StartDetached(routine, cancellation);
     public void StopCoroutine(Coroutine coroutine) => Tasks.StopCoroutine(coroutine);
     public void StopAllCoroutines() => Tasks.StopAllCoroutines();
 

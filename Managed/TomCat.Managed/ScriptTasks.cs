@@ -61,6 +61,42 @@ public sealed class ScriptTasks
         Run(coroutine.Run);
         return coroutine;
     }
+    /// <summary>
+    /// Starts a coroutine owned by this script from any script callback, for
+    /// example a manager starting a door's animation. Unlike
+    /// <see cref="StartCoroutine"/> the first step does not run immediately:
+    /// it runs at this script's next task dispatch, under this script's
+    /// identity, so it observes its own entity. Stops with this script like
+    /// any other coroutine.
+    /// </summary>
+    public Coroutine StartDetached(System.Collections.IEnumerator routine,
+        CancellationToken cancellation = default)
+    {
+        ArgumentNullException.ThrowIfNull(routine);
+        if (Environment.CurrentManagedThreadId != _thread || !ScriptExecutionContext.IsActive)
+            throw new InvalidOperationException("StartDetached must be called on the engine thread from a script callback.");
+        Cancellation.ThrowIfCancellationRequested();
+        ClaimIterator(routine);
+        var coroutine = new Coroutine(this, routine, cancellation);
+        _coroutines.Add(coroutine);
+        Task task = StartAtNextDispatch(coroutine);
+        lock (_gate) _running.Add(task);
+        return coroutine;
+    }
+
+    private async Task StartAtNextDispatch(Coroutine coroutine)
+    {
+        try
+        {
+            await MainThread(Cancellation);
+        }
+        catch (OperationCanceledException) when (Cancellation.IsCancellationRequested)
+        {
+            coroutine.Stop();
+        }
+        await coroutine.Run(Cancellation);
+    }
+
     public void StopCoroutine(Coroutine coroutine)
     {
         ArgumentNullException.ThrowIfNull(coroutine);

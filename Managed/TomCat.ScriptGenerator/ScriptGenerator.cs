@@ -32,7 +32,11 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
     private static readonly DiagnosticDescriptor MissingConstructor = Error("TCG007",
         "Script needs a parameterless constructor", "Script '{0}' must have a parameterless constructor");
     private static readonly DiagnosticDescriptor UnsupportedField = Error("TCG008",
-        "Serialized field type is unsupported", "Serialized field '{0}.{1}' has unsupported type '{2}'");
+        "Serialized field type is unsupported",
+        "Serialized field '{0}.{1}' has unsupported type '{2}'. Supported types are bool, int, long, float, double, string, enums, Vector2/3/4, Color, Entity and AssetRef<T>; mark the field [NonSerialized] or make it non-public if it should not be saved.");
+    private static readonly DiagnosticDescriptor DelegateField = Error("TCG012",
+        "Delegate fields cannot be serialized",
+        "Field '{0}.{1}' has delegate type '{2}', which scenes cannot store. Declare it as an event ('public event {2} {1};'), mark it [NonSerialized], or make it non-public. To wire callbacks in the editor, expose a public void method instead.");
     private static readonly DiagnosticDescriptor DuplicateAsset = Error("TCG009",
         "Duplicate script AssetHandle", "AssetHandle {0} maps to more than one MonoBehaviour");
     private static readonly DiagnosticDescriptor UnsupportedAssetMarker = Error("TCG010",
@@ -229,6 +233,13 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
                 context.ReportDiagnostic(Diagnostic.Create(UnsupportedAssetMarker,
                     field.Locations.FirstOrDefault(), script.ToDisplayString(), field.Name,
                     assetMarker));
+                continue;
+            }
+            if (field.Type.TypeKind == TypeKind.Delegate)
+            {
+                context.ReportDiagnostic(Diagnostic.Create(DelegateField,
+                    field.Locations.FirstOrDefault(), script.ToDisplayString(), field.Name,
+                    field.Type.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)));
                 continue;
             }
             if (!TryGetFieldType(field.Type, out string token, out string? typeName))

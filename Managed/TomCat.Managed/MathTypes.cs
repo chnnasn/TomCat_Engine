@@ -23,6 +23,22 @@ public struct Vector2 : IEquatable<Vector2>
     public static Vector2 operator +(Vector2 left, Vector2 right) => new(left.X + right.X, left.Y + right.Y);
     public static Vector2 operator -(Vector2 left, Vector2 right) => new(left.X - right.X, left.Y - right.Y);
     public static Vector2 operator *(Vector2 value, float scalar) => new(value.X * scalar, value.Y * scalar);
+    public static Vector2 operator *(float scalar, Vector2 value) => new(value.X * scalar, value.Y * scalar);
+    /// <summary>Component-wise product.</summary>
+    public static Vector2 operator *(Vector2 left, Vector2 right) => new(left.X * right.X, left.Y * right.Y);
+    public static Vector2 operator /(Vector2 value, float scalar) => new(value.X / scalar, value.Y / scalar);
+    /// <summary>Component-wise quotient.</summary>
+    public static Vector2 operator /(Vector2 left, Vector2 right) => new(left.X / right.X, left.Y / right.Y);
+    public static Vector2 operator -(Vector2 value) => new(-value.X, -value.Y);
+    public static bool operator ==(Vector2 left, Vector2 right) => left.Equals(right);
+    public static bool operator !=(Vector2 left, Vector2 right) => !left.Equals(right);
+    public readonly float Length => MathF.Sqrt(X * X + Y * Y);
+    public readonly float LengthSquared => X * X + Y * Y;
+    /// <summary>Unit-length copy, or zero for a zero vector.</summary>
+    public readonly Vector2 Normalized => Length > 0.0f ? this / Length : default;
+    public static float Dot(Vector2 left, Vector2 right) => left.X * right.X + left.Y * right.Y;
+    public static float Distance(Vector2 left, Vector2 right) => (left - right).Length;
+    public static Vector2 Lerp(Vector2 from, Vector2 to, float t) => from + (to - from) * t;
     public readonly bool Equals(Vector2 other) => X.Equals(other.X) && Y.Equals(other.Y);
     public override readonly bool Equals(object? obj) => obj is Vector2 other && Equals(other);
     public override readonly int GetHashCode() => HashCode.Combine(X, Y);
@@ -53,6 +69,22 @@ public struct Vector3 : IEquatable<Vector3>
     public static Vector3 operator +(Vector3 left, Vector3 right) => new(left.X + right.X, left.Y + right.Y, left.Z + right.Z);
     public static Vector3 operator -(Vector3 left, Vector3 right) => new(left.X - right.X, left.Y - right.Y, left.Z - right.Z);
     public static Vector3 operator *(Vector3 value, float scalar) => new(value.X * scalar, value.Y * scalar, value.Z * scalar);
+    public static Vector3 operator *(float scalar, Vector3 value) => new(value.X * scalar, value.Y * scalar, value.Z * scalar);
+    /// <summary>Component-wise product.</summary>
+    public static Vector3 operator *(Vector3 left, Vector3 right) => new(left.X * right.X, left.Y * right.Y, left.Z * right.Z);
+    public static Vector3 operator /(Vector3 value, float scalar) => new(value.X / scalar, value.Y / scalar, value.Z / scalar);
+    /// <summary>Component-wise quotient.</summary>
+    public static Vector3 operator /(Vector3 left, Vector3 right) => new(left.X / right.X, left.Y / right.Y, left.Z / right.Z);
+    public static Vector3 operator -(Vector3 value) => new(-value.X, -value.Y, -value.Z);
+    public static bool operator ==(Vector3 left, Vector3 right) => left.Equals(right);
+    public static bool operator !=(Vector3 left, Vector3 right) => !left.Equals(right);
+    public readonly float Length => MathF.Sqrt(X * X + Y * Y + Z * Z);
+    public readonly float LengthSquared => X * X + Y * Y + Z * Z;
+    /// <summary>Unit-length copy, or zero for a zero vector.</summary>
+    public readonly Vector3 Normalized => Length > 0.0f ? this / Length : default;
+    public static float Dot(Vector3 left, Vector3 right) => left.X * right.X + left.Y * right.Y + left.Z * right.Z;
+    public static float Distance(Vector3 left, Vector3 right) => (left - right).Length;
+    public static Vector3 Lerp(Vector3 from, Vector3 to, float t) => from + (to - from) * t;
     public readonly bool Equals(Vector3 other) => X.Equals(other.X) && Y.Equals(other.Y) && Z.Equals(other.Z);
     public override readonly bool Equals(object? obj) => obj is Vector3 other && Equals(other);
     public override readonly int GetHashCode() => HashCode.Combine(X, Y, Z);
