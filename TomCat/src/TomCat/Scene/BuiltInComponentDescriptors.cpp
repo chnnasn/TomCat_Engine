@@ -2310,6 +2310,50 @@ namespace TomCat {
 			return descriptor;
 		}
 
+		ComponentDescriptor MakePixelPerfectCamera2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<PixelPerfectCamera2D>(
+				ComponentIds::PixelPerfectCamera2D, "TomCat.PixelPerfectCamera2D",
+				"Pixel Perfect Camera 2D");
+			descriptor.UseGenericInspector = true;
+			descriptor.ScriptAccessible = true;
+			const auto referenceSize = [](uint64_t id, const char* name,
+				uint32_t PixelPerfectCamera2D::* member)
+			{
+				PropertyDescriptor property = UIntProperty<PixelPerfectCamera2D>(id, name, member);
+				const auto set = property.Set;
+				property.Set = [set, name](Entity entity, const PropertyValue& value,
+					std::string& error)
+				{
+					const uint32_t size = std::get<uint32_t>(value);
+					if (size == 0 || size > 8192)
+					{
+						error = std::string(name) + " must be 1-8192 pixels";
+						return false;
+					}
+					return set(entity, value, error);
+				};
+				return property;
+			};
+			descriptor.Properties = {
+				BoolProperty<PixelPerfectCamera2D>(
+					ComponentIds::PixelPerfectCamera2DProperties::Enabled,
+					"Enabled", &PixelPerfectCamera2D::Enabled),
+				referenceSize(ComponentIds::PixelPerfectCamera2DProperties::ReferenceWidth,
+					"ReferenceWidth", &PixelPerfectCamera2D::ReferenceWidth),
+				referenceSize(ComponentIds::PixelPerfectCamera2DProperties::ReferenceHeight,
+					"ReferenceHeight", &PixelPerfectCamera2D::ReferenceHeight),
+				FloatProperty<PixelPerfectCamera2D>(
+					ComponentIds::PixelPerfectCamera2DProperties::PixelsPerUnit,
+					"PixelsPerUnit", &PixelPerfectCamera2D::PixelsPerUnit,
+					0.0f, 100000.0f, false),
+				ColorProperty<PixelPerfectCamera2D>(
+					ComponentIds::PixelPerfectCamera2DProperties::LetterboxColor,
+					"LetterboxColor", &PixelPerfectCamera2D::LetterboxColor)
+			};
+			return descriptor;
+		}
+
 		ComponentDescriptor MakePostProcess2DDescriptor()
 		{
 			auto descriptor = BaseDescriptor<PostProcess2D>(
@@ -2510,6 +2554,7 @@ namespace TomCat {
 		result.emplace_back(MakeTilemapRenderer2DDescriptor());
 		result.emplace_back(MakeTilemapCollider2DDescriptor());
 		result.emplace_back(MakePostProcess2DDescriptor());
+		result.emplace_back(MakePixelPerfectCamera2DDescriptor());
 		return result;
 	}
 

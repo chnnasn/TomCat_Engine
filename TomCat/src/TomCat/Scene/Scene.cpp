@@ -6,6 +6,7 @@
 #include "TomCat/Asset/AssetManager.h"
 
 #include "Components.h"
+#include "TomCat/Renderer/PixelPerfect.h"
 #include "Advanced2D.h"
 #include "SpriteAnimation.h"
 #include "TomCat/Scripting/ScriptEngine.h"
@@ -4650,18 +4651,54 @@ namespace TomCat {
 		if (mainCameraEntity)
 		{
 			auto& camera = mainCameraEntity.GetComponent<C_Camera>();
-			RenderCommand::SetClearColor(camera.BackgroundColor);
-			RenderCommand::Clear();
-			const glm::mat4 cameraTransform = GetRuntimeCameraTransform(
+			glm::mat4 cameraTransform = GetRuntimeCameraTransform(
 				mainCameraEntity.GetUUID());
-			Renderer3D::BeginScene(camera._Camera, cameraTransform);
+			glm::mat4 projection = camera._Camera.GetProjection();
+			PixelPerfectFrame pixelFrame;
+			if (mainCameraEntity.HasComponent<PixelPerfectCamera2D>()
+				&& camera._Camera.GetProjectionType()
+					== SceneCamera::ProjectionType::Orthographic)
+			{
+				const PixelPerfectCamera2D& pixel =
+					mainCameraEntity.GetComponent<PixelPerfectCamera2D>();
+				if (pixel.Enabled)
+					pixelFrame = ComputePixelPerfectFrame(m_ViewportWidth,
+						m_ViewportHeight, pixel.ReferenceWidth, pixel.ReferenceHeight,
+						pixel.PixelsPerUnit, cameraTransform,
+						camera._Camera.GetOrthographicNearClip(),
+						camera._Camera.GetOrthographicFarClip());
+				if (pixelFrame.Valid)
+				{
+					projection = pixelFrame.Projection;
+					cameraTransform = pixelFrame.CameraTransform;
+				}
+			}
+			const glm::mat4 viewProjection = projection * glm::inverse(cameraTransform);
+			const RenderCameraView view{ viewProjection, glm::vec3(cameraTransform[3]) };
+			RenderCommand::SetClearColor(pixelFrame.Valid
+				? mainCameraEntity.GetComponent<PixelPerfectCamera2D>().LetterboxColor
+				: camera.BackgroundColor);
+			RenderCommand::Clear();
+			if (pixelFrame.Valid)
+				DrawPixelPerfectBackground(pixelFrame, camera.BackgroundColor);
+			if (pixelFrame.Valid)
+				Renderer3D::BeginScene(view);
+			else
+				Renderer3D::BeginScene(camera._Camera, cameraTransform);
 			Render3DComponents(*this, m_Registry, false);
 			Renderer3D::EndScene();
-			Renderer2D::BeginScene(camera._Camera, cameraTransform);
-			Render2DComponents(*this, m_Registry,
-				camera._Camera.GetProjection() * glm::inverse(cameraTransform),
+			if (pixelFrame.Valid)
+				Renderer2D::BeginScene(view);
+			else
+				Renderer2D::BeginScene(camera._Camera, cameraTransform);
+			Renderer2D::SetPixelSnap(pixelFrame.Valid ? pixelFrame.WorldUnitsPerPixel : 0.0f);
+			Render2DComponents(*this, m_Registry, viewProjection,
 				RuntimeUIVisibilityMode::Gameplay);
 			Renderer2D::EndScene();
+			Renderer2D::SetPixelSnap(0.0f);
+			if (pixelFrame.Valid)
+				DrawPixelPerfectLetterbox(pixelFrame,
+					mainCameraEntity.GetComponent<PixelPerfectCamera2D>().LetterboxColor);
 			RenderCommand::ApplyColorGrade(camera.Exposure,camera.Saturation,camera.Vignette);
 			// PostProcess2D extends the camera's built-in grade with engine
 			// built-in full-screen passes. The fixed order is grade, palette
@@ -4706,6 +4743,54 @@ namespace TomCat {
 		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
 			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,
 			RuntimeUIVisibilityMode::Gameplay);
+	}
+
+	void Scene::DrawPixelPerfectBackground(const PixelPerfectFrame& frame,
+		const glm::vec4& color)
+	{
+		// The clear used the letterbox color; paint the camera background inside
+		// the content rectangle only.
+		DrawScreenRectangles(frame, color, true);
+	}
+
+	void Scene::DrawPixelPerfectLetterbox(const PixelPerfectFrame& frame,
+		const glm::vec4& color)
+	{
+		// Covers anything (large sprites, particles) drawn outside the content
+		// rectangle, keeping the visible area exactly the reference resolution.
+		DrawScreenRectangles(frame, color, false);
+	}
+
+	void Scene::DrawScreenRectangles(const PixelPerfectFrame& frame,
+		const glm::vec4& color, bool content)
+	{
+		const float width = static_cast<float>(m_ViewportWidth);
+		const float height = static_cast<float>(m_ViewportHeight);
+		if (width <= 0.0f || height <= 0.0f)
+			return;
+		RenderCameraView screen;
+		screen.ViewProjection = glm::orthoLH_NO(0.0f, width, 0.0f, height, -1.0f, 1.0f);
+		Renderer2D::BeginScene(screen);
+		const auto rectangle = [](float x, float y, float w, float h, const glm::vec4& tint)
+		{
+			if (w > 0.0f && h > 0.0f)
+				Renderer2D::DrawQuad(glm::vec3(x + w * 0.5f, y + h * 0.5f, 0.0f),
+					glm::vec2(w, h), tint);
+		};
+		const float x0 = static_cast<float>(frame.ContentX);
+		const float y0 = static_cast<float>(frame.ContentY);
+		const float x1 = x0 + frame.ContentWidth;
+		const float y1 = y0 + frame.ContentHeight;
+		if (content)
+			rectangle(x0, y0, x1 - x0, y1 - y0, color);
+		else
+		{
+			rectangle(0.0f, 0.0f, width, y0, color);
+			rectangle(0.0f, y1, width, height - y1, color);
+			rectangle(0.0f, y0, x0, y1 - y0, color);
+			rectangle(x1, y0, width - x1, y1 - y0, color);
+		}
+		Renderer2D::EndScene();
 	}
 
 	void Scene::OnUpdateEditor(Timestep ts, const RenderCameraView& view)

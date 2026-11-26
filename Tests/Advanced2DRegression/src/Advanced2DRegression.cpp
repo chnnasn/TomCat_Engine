@@ -1,6 +1,8 @@
 #include "TomCat/Core/Log.h"
 #include "../../../Editor/TomCatInut/src/EditorPropertyTransaction.h"
 #include "TomCat/Scene/Advanced2D.h"
+#include "TomCat/Renderer/PixelPerfect.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include "TomCat/Scene/ComponentRegistry.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
@@ -866,6 +868,100 @@ namespace {
 
 }
 
+	void TestPixelPerfectFrameAndPersistence()
+	{
+		using TomCat::ComputePixelPerfectFrame;
+		const glm::mat4 camera = glm::translate(glm::mat4(1.0f),
+			glm::vec3(1.234f, -0.567f, -5.0f));
+
+		// 1440x810 fits 320x180 four times: scale 4, 1280x720 centred.
+		TomCat::PixelPerfectFrame frame = ComputePixelPerfectFrame(1440, 810, 320, 180,
+			100.0f, camera, 0.0f, 100.0f);
+		Require(frame.Valid && frame.Scale == 4 && frame.ContentWidth == 1280
+			&& frame.ContentHeight == 720 && frame.ContentX == 80 && frame.ContentY == 45,
+			"Pixel-perfect frame must pick the largest integer scale and centre it");
+		Require(Near(frame.CameraTransform[3].x, 1.23f)
+			&& Near(frame.CameraTransform[3].y, -0.57f)
+			&& Near(frame.CameraTransform[3].z, -5.0f),
+			"Pixel-perfect camera must snap x/y to the 1/PPU grid and keep z");
+
+		// The content rectangle must cover exactly the reference resolution:
+		// world width 320/100 units mapped across 1280 screen pixels.
+		const glm::mat4 viewProjection = frame.Projection * glm::inverse(frame.CameraTransform);
+		const auto toScreen = [&](float x, float y)
+		{
+			const glm::vec4 clip = viewProjection * glm::vec4(x, y, 0.0f, 1.0f);
+			return glm::vec2((clip.x * 0.5f + 0.5f) * 1440.0f, (clip.y * 0.5f + 0.5f) * 810.0f);
+		};
+		const glm::vec2 centre = toScreen(1.23f, -0.57f);
+		const glm::vec2 oneUnit = toScreen(1.24f, -0.56f);
+		Require(Near(centre.x, 720.0f) && Near(centre.y, 405.0f),
+			"Snapped camera position must map to the content centre");
+		// Screen positions come from float matrices on ~1000-pixel values, so
+		// allow a thousandth of a pixel.
+		const glm::vec2 step = oneUnit - centre;
+		Require(Near(step.x, 4.0f, 1.0e-3f) && Near(step.y, 4.0f, 1.0e-3f),
+			("One reference pixel must span exactly Scale screen pixels, got "
+				+ std::to_string(step.x) + " x " + std::to_string(step.y)).c_str());
+
+		// Smaller than the reference: scale 1 and crop, still valid.
+		frame = ComputePixelPerfectFrame(200, 100, 320, 180, 100.0f, camera, 0.0f, 100.0f);
+		Require(frame.Valid && frame.Scale == 1 && frame.ContentWidth == 200
+			&& frame.ContentHeight == 100 && frame.ContentX == 0 && frame.ContentY == 0,
+			"A small viewport must fall back to scale 1 and crop");
+		Require(!ComputePixelPerfectFrame(0, 720, 320, 180, 100.0f, camera, 0.0f, 100.0f).Valid
+			&& !ComputePixelPerfectFrame(1280, 720, 320, 0, 100.0f, camera, 0.0f, 100.0f).Valid
+			&& !ComputePixelPerfectFrame(1280, 720, 320, 180, 0.0f, camera, 0.0f, 100.0f).Valid
+			&& !ComputePixelPerfectFrame(1280, 720, 320, 180, 100.0f, camera, 5.0f, 5.0f).Valid,
+			"Invalid pixel-perfect inputs must be rejected");
+		const glm::vec3 snapped = TomCat::SnapToPixelGrid({ 0.0149f, 0.0151f, 3.0f }, 0.01f);
+		Require(Near(snapped.x, 0.01f) && Near(snapped.y, 0.02f) && snapped.z == 3.0f,
+			"SnapToPixelGrid must round x/y to the nearest grid line");
+
+		// Component descriptor, validation and round trip.
+		RequireDescriptor(TomCat::ComponentIds::PixelPerfectCamera2D,
+			"TomCat.PixelPerfectCamera2D", 5);
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity entity = scene->CreateEntityWithUUID(
+			TomCat::UUID(0x20260000000000f7ULL), "Pixel camera");
+		std::string error;
+		TomCat::ComponentRegistry& registry = TomCat::ComponentRegistry::Get();
+		Require(registry.Add(entity, TomCat::UUID(TomCat::ComponentIds::PixelPerfectCamera2D),
+			error), "PixelPerfectCamera2D descriptor add failed");
+		const TomCat::ComponentDescriptor* descriptor =
+			registry.Find(TomCat::UUID(TomCat::ComponentIds::PixelPerfectCamera2D));
+		const auto findProperty = [&](uint64_t id) -> const TomCat::PropertyDescriptor&
+		{
+			for (const auto& property : descriptor->Properties)
+				if (static_cast<uint64_t>(property.PropertyId) == id)
+					return property;
+			throw std::runtime_error("missing PixelPerfectCamera2D property");
+		};
+		const auto& width = findProperty(
+			TomCat::ComponentIds::PixelPerfectCamera2DProperties::ReferenceWidth);
+		Require(!width.Set(entity, TomCat::PropertyValue(uint32_t(0)), error)
+			&& !width.Set(entity, TomCat::PropertyValue(uint32_t(9000)), error)
+			&& width.Set(entity, TomCat::PropertyValue(uint32_t(480)), error),
+			"ReferenceWidth must accept 1-8192 pixels only");
+		auto& pixel = entity.GetComponent<TomCat::PixelPerfectCamera2D>();
+		pixel.ReferenceHeight = 270;
+		pixel.PixelsPerUnit = 16.0f;
+		pixel.LetterboxColor = { 0.1f, 0.2f, 0.3f, 1.0f };
+
+		std::string document;
+		Require(TomCat::SceneArchiveCodec::Encode(scene, document, error),
+			"Pixel camera scene encode failed");
+		const std::vector<uint8_t> bytes(document.begin(), document.end());
+		auto decoded = TomCat::CreateRef<TomCat::Scene>();
+		Require(TomCat::SceneArchiveCodec::Decode(bytes, decoded, "PixelCamera.tomcat", false),
+			"Pixel camera scene decode failed");
+		const auto& loaded = decoded->FindEntityByUUID(entity.GetUUID())
+			.GetComponent<TomCat::PixelPerfectCamera2D>();
+		Require(loaded.Enabled && loaded.ReferenceWidth == 480 && loaded.ReferenceHeight == 270
+			&& loaded.PixelsPerUnit == 16.0f && loaded.LetterboxColor == pixel.LetterboxColor,
+			"PixelPerfectCamera2D values did not round-trip");
+	}
+
 int main()
 {
 	try
@@ -878,6 +974,7 @@ int main()
 		TestDeterministicParticleRuntime();
 		TestLightAttenuation();
 		TestRegistrySceneRoundTripAndReferences();
+		TestPixelPerfectFrameAndPersistence();
 		std::cout << "Advanced2DRegression: PASS\n";
 		return 0;
 	}

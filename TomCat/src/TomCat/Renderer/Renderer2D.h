@@ -70,6 +70,14 @@ namespace TomCat {
 			// Stable JSON for regression baselines; frame is caller supplied.
 			[[nodiscard]] std::string ToJson(uint64_t frame) const;
 		};
+		// Pixel-perfect sprite submission (PixelPerfectCamera2D). While
+		// unitsPerPixel > 0, DrawSprite snaps each sprite's translation to that
+		// world grid and insets its UVs by a hundredth of a texel so neighbouring
+		// atlas texels never bleed in at nearest sampling. Zero disables it. The Scene sets and clears it
+		// around its own 2D pass.
+		static void SetPixelSnap(float unitsPerPixel);
+		static float GetPixelSnap();
+
 		static void SetSceneDiagnosticsEnabled(bool enabled);
 		static bool IsSceneDiagnosticsEnabled();
 		static void SubmitSceneDiagnostics(SceneRenderDiagnostics diagnostics);

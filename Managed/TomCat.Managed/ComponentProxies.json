@@ -603,6 +603,19 @@
         { "name": "MaskColor", "propertyId": "1613", "kind": "Color" },
         { "name": "MaskSprite", "propertyId": "1614", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<Texture2DAsset>" }
       ]
+    },
+    {
+      "managedType": "PixelPerfectCamera2D",
+      "stableName": "TomCat.PixelPerfectCamera2D",
+      "typeId": "0x9f0000000000001b",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "1700", "kind": "Bool" },
+        { "name": "ReferenceWidth", "propertyId": "1701", "kind": "UInt32", "summary": "Visible width in reference pixels (1-8192)." },
+        { "name": "ReferenceHeight", "propertyId": "1702", "kind": "UInt32", "summary": "Visible height in reference pixels (1-8192)." },
+        { "name": "PixelsPerUnit", "propertyId": "1703", "kind": "Float", "summary": "Reference pixels per world unit; positions snap to 1 / PixelsPerUnit." },
+        { "name": "LetterboxColor", "propertyId": "1704", "kind": "Color" }
+      ]
     }
   ]
 }

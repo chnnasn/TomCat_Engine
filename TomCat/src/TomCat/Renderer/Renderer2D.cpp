@@ -10,6 +10,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
+#include "TomCat/Renderer/PixelPerfect.h"
 #include <cmath>
 #include <cstdio>
 #include <atomic>
@@ -138,6 +139,8 @@ namespace TomCat {
         // sprites are short-circuited to unlit otherwise so batches
         // never depend on stale uniform-buffer state.
         bool SceneLightingActive = false;
+        // World units per reference pixel while pixel-perfect rendering is on.
+        float PixelSnap = 0.0f;
 
 		Renderer2D::Statistics Stats;
 
@@ -1125,13 +1128,49 @@ void main()
 			return;
 		if (!usesGeometry)
 		{
-			DrawQuad(transform, src.Sprite, src.TilingFactor, tint, entityID,
-				lit);
-			return;
+			if (s_Data.PixelSnap > 0.0f)
+			{
+				// Legacy unit-quad sprites snap the same way.
+				geometry.Width = geometry.Height = 1.0f;
+				geometry.UMin = geometry.VMin = 0.0f;
+				geometry.UMax = geometry.VMax = src.TilingFactor;
+			}
+			else
+			{
+				DrawQuad(transform, src.Sprite, src.TilingFactor, tint, entityID,
+					lit);
+				return;
+			}
 		}
-		DrawTexturedQuadRegion(transform * SpriteGeometryTransform(geometry),
-			src.Sprite, { geometry.UMin, geometry.VMin },
-			{ geometry.UMax, geometry.VMax }, tint, entityID, lit);
+		glm::vec2 uvMin(geometry.UMin, geometry.VMin);
+		glm::vec2 uvMax(geometry.UMax, geometry.VMax);
+		glm::mat4 quad = transform * SpriteGeometryTransform(geometry);
+		if (s_Data.PixelSnap > 0.0f)
+		{
+			// Snap the quad's lower-left corner, not its centre: odd-sized
+			// sprites then still land on whole pixels.
+			const glm::vec3 corner = glm::vec3(quad * glm::vec4(-0.5f, -0.5f, 0.0f, 1.0f));
+			const glm::vec3 snapped = SnapToPixelGrid(corner, s_Data.PixelSnap);
+			quad[3] += glm::vec4(snapped - corner, 0.0f);
+			// A hundredth of a texel: enough to keep rounding from sampling the
+			// neighbouring atlas texel, too small to move any visible pixel.
+			const glm::vec2 inset(0.01f / src.Sprite->GetWidth(),
+				0.01f / src.Sprite->GetHeight());
+			uvMin += inset;
+			uvMax -= inset;
+		}
+		DrawTexturedQuadRegion(quad, src.Sprite, uvMin, uvMax, tint, entityID, lit);
+	}
+
+	void Renderer2D::SetPixelSnap(float unitsPerPixel)
+	{
+		s_Data.PixelSnap = std::isfinite(unitsPerPixel) && unitsPerPixel > 0.0f
+			? unitsPerPixel : 0.0f;
+	}
+
+	float Renderer2D::GetPixelSnap()
+	{
+		return s_Data.PixelSnap;
 	}
 
 	glm::mat4 Renderer2D::SpriteGeometryTransform(const SpriteRenderGeometry& geometry)

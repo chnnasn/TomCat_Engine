@@ -44,6 +44,8 @@ internal static class GeneratedRegisteredComponentProxies
                 static entity => new TilemapCollider2D(entity)),
             [typeof(PostProcess2D)] = new(0x9f0000000000001aUL,
                 static entity => new PostProcess2D(entity)),
+            [typeof(PixelPerfectCamera2D)] = new(0x9f0000000000001bUL,
+                static entity => new PixelPerfectCamera2D(entity)),
             [typeof(TextRenderer)] = new(0x9f01000000000001UL,
                 static entity => new TextRenderer(entity)),
             [typeof(Canvas)] = new(0x9f01000000000002UL,
@@ -1077,6 +1079,53 @@ public sealed partial class PostProcess2D : IEntityComponent
         get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x000000000000064eUL));
         set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
             0x000000000000064eUL, value.Handle);
+    }
+}
+
+[RegisteredComponent(0x9f0000000000001bUL)]
+public sealed partial class PixelPerfectCamera2D : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f0000000000001bUL;
+
+    internal PixelPerfectCamera2D(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000006a4UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000006a4UL, value);
+    }
+
+    /// <summary>Visible width in reference pixels (1-8192).</summary>
+    public uint ReferenceWidth
+    {
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x00000000000006a5UL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x00000000000006a5UL, value);
+    }
+
+    /// <summary>Visible height in reference pixels (1-8192).</summary>
+    public uint ReferenceHeight
+    {
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x00000000000006a6UL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x00000000000006a6UL, value);
+    }
+
+    /// <summary>Reference pixels per world unit; positions snap to 1 / PixelsPerUnit.</summary>
+    public float PixelsPerUnit
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000006a7UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000006a7UL, value);
+    }
+
+    public Color LetterboxColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x00000000000006a8UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x00000000000006a8UL, value);
     }
 }
 

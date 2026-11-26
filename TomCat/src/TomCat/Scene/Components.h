@@ -515,6 +515,23 @@ namespace TomCat {
 	// MaskTransition. Kept as a separate component because Camera's legacy
 	// Scene-11 mirror comparison requires its payload to stay byte-compatible,
 	// while a new component has no legacy readers to keep in sync.
+	// Pixel-perfect framing for the primary orthographic camera it sits on.
+	// The camera shows ReferenceWidth x ReferenceHeight reference pixels at the
+	// largest whole-number scale that fits the window, letterboxed with
+	// LetterboxColor. Camera and sprite positions snap to the reference-pixel
+	// grid (1 / PixelsPerUnit world units) and sprite UVs are inset by a
+	// hundredth of a texel, which removes shimmer and atlas seams. OrthographicSize is ignored
+	// while this is enabled. Pair it with filterMode: Nearest on pixel-art
+	// textures. A separate component so Camera's Scene 11 payload is unchanged.
+	struct PixelPerfectCamera2D
+	{
+		bool Enabled = true;
+		uint32_t ReferenceWidth = 320;
+		uint32_t ReferenceHeight = 180;
+		float PixelsPerUnit = 100.0f;
+		glm::vec4 LetterboxColor{ 0.0f, 0.0f, 0.0f, 1.0f };
+	};
+
 	struct PostProcess2D
 	{
 		bool Enabled = true;

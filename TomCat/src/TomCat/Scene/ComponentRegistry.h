@@ -53,6 +53,7 @@ namespace TomCat {
 		inline constexpr uint64_t TilemapRenderer2D = 0x9f00000000000015ULL;
 		inline constexpr uint64_t TilemapCollider2D = 0x9f00000000000019ULL;
 		inline constexpr uint64_t PostProcess2D = 0x9f0000000000001aULL;
+		inline constexpr uint64_t PixelPerfectCamera2D = 0x9f0000000000001bULL;
 
 		// Property IDs below preserve the numeric IDs exposed by the original
 		// gameplay ABI. They are now persisted 64-bit identities owned by the
@@ -205,6 +206,13 @@ namespace TomCat {
 			inline constexpr uint64_t Friction = 1503;
 			inline constexpr uint64_t Restitution = 1504;
 			inline constexpr uint64_t RestitutionThreshold = 1505;
+		}
+		namespace PixelPerfectCamera2DProperties {
+			inline constexpr uint64_t Enabled = 1700;
+			inline constexpr uint64_t ReferenceWidth = 1701;
+			inline constexpr uint64_t ReferenceHeight = 1702;
+			inline constexpr uint64_t PixelsPerUnit = 1703;
+			inline constexpr uint64_t LetterboxColor = 1704;
 		}
 		namespace PostProcess2DProperties {
 			inline constexpr uint64_t Enabled = 1600;

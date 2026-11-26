@@ -180,6 +180,14 @@ namespace TomCat {
 		// runtime explicitly disables it.
 		void OnUpdateRuntime(Timestep ts, bool render = true);
 		void OnRenderRuntime();
+		// Draw the screen-space rectangles of a pixel-perfect frame: the content
+		// background, or the letterbox bars around it.
+		void DrawPixelPerfectBackground(const struct PixelPerfectFrame& frame,
+			const glm::vec4& color);
+		void DrawPixelPerfectLetterbox(const struct PixelPerfectFrame& frame,
+			const glm::vec4& color);
+		void DrawScreenRectangles(const struct PixelPerfectFrame& frame,
+			const glm::vec4& color, bool content);
 		// Physics simulation keeps authoritative current transforms in the ECS.
 		// Rendering reads this matrix to interpolate between the two most recent
 		// fixed poses without feeding a presentation-only pose back into physics.
