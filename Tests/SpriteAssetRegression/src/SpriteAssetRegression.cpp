@@ -17,7 +17,6 @@
 #include "stb_image.h"
 #include <yaml-cpp/yaml.h>
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -1551,6 +1550,93 @@ namespace {
 			"Cooked Sprite envelope lost its atlas slice metadata or payload");
 	}
 
+	void TestPixelSizedWholeTextureAuthoringAndCook()
+	{
+		TemporaryAssetProject environment;
+		TomCat::AssetManager& assets = TomCat::AssetManager::Get();
+		Require(assets.Initialize(environment.Assets, environment.Library),
+			"Pixel-sized texture AssetManager initialization failed");
+		const TomCat::AssetHandle legacy = TomCat::EnsurePrimitiveSpriteAsset(
+			assets, "Circle");
+		const TomCat::AssetHandle sized = TomCat::EnsurePrimitiveSpriteAsset(
+			assets, "Square");
+		Require(static_cast<uint64_t>(legacy) != 0 && static_cast<uint64_t>(sized) != 0,
+			"Pixel-sized texture fixtures could not be created");
+
+		// Without the opt-in a whole texture keeps the 1x1 unit quad, even though
+		// primitives already carry a PixelsPerUnit import setting.
+		TomCat::ResolvedSpriteAsset resolved;
+		Require(assets.ResolveSpriteAsset(sized, resolved) && !resolved.IsSubAsset
+			&& resolved.WholeTexturePixelsPerUnit == 0.0f,
+			"Whole textures must keep unit-quad sizing unless they opt in");
+		TomCat::SpriteRenderGeometry geometry;
+		bool usesGeometry = true;
+		Require(TomCat::ResolveSpriteGeometry(resolved, 64, 64, geometry, usesGeometry)
+			&& !usesGeometry, "Legacy whole textures must not use Sprite geometry");
+
+		const TomCat::AssetMetadata* original = assets.Registry().GetMetadata(sized);
+		Require(original != nullptr, "Pixel-sized texture metadata is missing");
+		TomCat::AssetImportSettings settings = original->ImportSettings;
+		settings[TomCat::SpriteSizeSettingKey] = TomCat::SpriteSizePixelsPerUnit;
+		settings["PixelsPerUnit"] = "32";
+		Require(assets.SetImportSettings(sized, settings),
+			"Pixel-sized texture import settings could not be saved");
+		Require(assets.ResolveSpriteAsset(sized, resolved) && !resolved.IsSubAsset
+			&& resolved.WholeTexturePixelsPerUnit == 32.0f,
+			"Opted-in whole texture did not report its PixelsPerUnit");
+		Require(TomCat::ResolveSpriteGeometry(resolved, 64, 64, geometry, usesGeometry)
+			&& usesGeometry && geometry.Width == 2.0f && geometry.Height == 2.0f
+			&& geometry.OffsetX == 0.0f && geometry.OffsetY == 0.0f
+			&& geometry.UMin == 0.0f && geometry.UMax == 1.0f
+			&& geometry.VMin == 0.0f && geometry.VMax == 1.0f,
+			"Opted-in 64px texture at 32 PPU must be a centred 2x2 world-unit quad");
+
+		TomCat::AssetImportSettings invalid = settings;
+		invalid["PixelsPerUnit"] = "not-a-number";
+		Require(TomCat::GetWholeTexturePixelsPerUnit(invalid) == 100.0f,
+			"Unparseable PixelsPerUnit must fall back to 100");
+		invalid["PixelsPerUnit"] = "-4";
+		Require(TomCat::GetWholeTexturePixelsPerUnit(invalid) == 100.0f,
+			"Non-positive PixelsPerUnit must fall back to 100");
+		invalid[TomCat::SpriteSizeSettingKey] = "Unit";
+		Require(TomCat::GetWholeTexturePixelsPerUnit(invalid) == 0.0f,
+			"Only SpriteSize=PixelsPerUnit opts in");
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		scene->SetSceneName("Pixel Sized Cook");
+		scene->CreateEntity("Sized").AddComponent<TomCat::SpriteRenderer>().SpriteHandle = sized;
+		scene->CreateEntity("Legacy").AddComponent<TomCat::SpriteRenderer>().SpriteHandle = legacy;
+		const std::filesystem::path scenePath = environment.Assets / "PixelSized.tomcat";
+		Require(TomCat::SceneSerializer(scene).Serialize(scenePath),
+			"Pixel-sized Scene could not be serialized");
+		const TomCat::AssetMetadata* sceneMetadata = assets.Registry().GetMetadata(scenePath);
+		Require(sceneMetadata != nullptr, "Pixel-sized Scene was not imported");
+		const std::filesystem::path package = environment.Root / "Build" / "PixelSized.tcpak";
+		Require(assets.CookToPackage(package, sceneMetadata->Handle),
+			"Cook rejected a pixel-sized whole texture");
+		assets.Shutdown();
+
+		Require(assets.MountCookedPackage(package),
+			"Player could not mount the pixel-sized package");
+		std::vector<uint8_t> cooked;
+		TomCat::AssetType cookedType = TomCat::AssetType::None;
+		Require(assets.ReadAssetBytes(sized, cooked, &cookedType)
+			&& cookedType == TomCat::AssetType::Texture2D,
+			"Pixel-sized texture is missing from the package");
+		TomCat::ResolvedSpriteAsset cookedSprite;
+		std::span<const uint8_t> payload;
+		Require(TomCat::ParseCookedSpriteSubAsset(cooked, cookedSprite, payload)
+			&& cookedSprite.TextureHandle == sized
+			&& cookedSprite.Data == TomCat::MakeWholeTextureSpriteData(64, 64, 32.0f)
+			&& TomCat::IsTextureArtifact(payload),
+			"Pixel-sized texture must cook as a full-image Sprite envelope");
+		std::vector<uint8_t> legacyBytes;
+		Require(assets.ReadAssetBytes(legacy, legacyBytes, &cookedType)
+			&& TomCat::IsTextureArtifact(legacyBytes),
+			"Legacy whole texture must cook unchanged");
+		assets.UnmountCookedPackage();
+	}
+
 	void TestAutomaticAtlasSlicingAndPacking()
 	{
 		constexpr uint32_t width = 8;
@@ -2037,6 +2123,7 @@ int main()
 		TestColdDirectAtlasCookIsReadOnly();
 		TestAutomaticAtlasSlicingAndPacking();
 		TestAtlasImportAndCookedSubSprite();
+		TestPixelSizedWholeTextureAuthoringAndCook();
 		TestCookRejectsReservedSubAssetDependency();
 		TestCookRejectsConcurrentSubAssetMutation(
 			ConcurrentCookMutation::Graph, "ConcurrentGraph");

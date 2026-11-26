@@ -13,6 +13,8 @@
 
 namespace TomCat {
 
+	struct SpriteRenderGeometry;
+
 	class Renderer2D
 	{
 	public:
@@ -124,6 +126,12 @@ namespace TomCat {
 
 		// Resolves the SpriteRenderer handle and draws its sprite through the textured-quad path.
 		static void DrawSprite(const glm::mat4& transform, SpriteRenderer& src, int entityID);
+		// Quad transform of a sprite relative to its entity transform. Identity
+		// for legacy whole textures; pixel-sized and pivot-offset for Sprite
+		// slices and textures imported with SpriteSize=PixelsPerUnit. Use it for
+		// culling and bounds so they match what DrawSprite submits.
+		static glm::mat4 GetSpriteLocalTransform(AssetHandle spriteHandle);
+		static glm::mat4 SpriteGeometryTransform(const SpriteRenderGeometry& geometry);
 		// Stats
 		struct Statistics
 		{

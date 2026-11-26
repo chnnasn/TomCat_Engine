@@ -985,7 +985,8 @@ namespace TomCat {
                 const auto& sprite = registry.get<SpriteRenderer>(value);
                 if (!isVisible(value) || !sprite.Enabled || !sprite.CastShadows) continue;
                 if (shadowEdges.size() >= 64) break;
-                const auto matrix = scene.GetRuntimeRenderTransform(registry.get<ID>(value).id);
+                const auto matrix = scene.GetRuntimeRenderTransform(registry.get<ID>(value).id)
+                    * Renderer2D::GetSpriteLocalTransform(sprite.SpriteHandle);
                 constexpr glm::vec2 corners[] = {{-.5f,-.5f},{.5f,-.5f},{.5f,.5f},{-.5f,.5f}};
                 for (int edge=0; edge<4; ++edge) shadowEdges.push_back({glm::vec2(matrix*glm::vec4(corners[edge],0,1)), glm::vec2(matrix*glm::vec4(corners[(edge+1)%4],0,1)),static_cast<int>(value)});
             }
@@ -1012,7 +1013,12 @@ namespace TomCat {
 				const UUID entityID = registry.get<ID>(entity).id;
 				const glm::mat4 worldTransform =
 					scene.GetRuntimeRenderTransform(entityID);
-				if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+				// Cull the quad DrawSprite will actually submit: Sprite slices and
+				// pixel-sized textures are not the entity's unit quad.
+				const AssetHandle cullHandle = sprite.RuntimeSpriteOverrideActive
+					? sprite.RuntimeSpriteOverrideHandle : sprite.SpriteHandle;
+				if (!Renderer2D::IsQuadVisible(worldTransform
+					* Renderer2D::GetSpriteLocalTransform(cullHandle), viewProjection))
 					continue;
 				const uint64_t sortableEntityID = static_cast<uint64_t>(entityID);
 				sprites.push_back({ Renderer2D::MakeSpriteSortKey(sprite,
@@ -1053,7 +1059,9 @@ namespace TomCat {
 						continue;
 					const glm::mat4 worldTransform = rootTransform
 						* Tilemap2DRuntime::GetCellTransform(tilemap, cell, grid);
-					if (!Renderer2D::IsQuadVisible(worldTransform, viewProjection))
+					if (!Renderer2D::IsQuadVisible(worldTransform
+						* Renderer2D::GetSpriteLocalTransform(cell.SpriteHandle),
+						viewProjection))
 						continue;
 					SpriteRenderer renderer;
 					renderer.SpriteHandle = cell.SpriteHandle;

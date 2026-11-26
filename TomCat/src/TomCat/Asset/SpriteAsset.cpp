@@ -815,6 +815,55 @@ namespace TomCat {
 		return true;
 	}
 
+	float GetWholeTexturePixelsPerUnit(const AssetImportSettings& settings)
+	{
+		const auto mode = settings.find(SpriteSizeSettingKey);
+		if (mode == settings.end() || mode->second != SpriteSizePixelsPerUnit)
+			return 0.0f;
+		float ppu = 100.0f;
+		const auto value = settings.find("PixelsPerUnit");
+		if (value != settings.end())
+		{
+			float parsed = 0.0f;
+			if (ParseNumber(value->second, parsed) && std::isfinite(parsed)
+				&& parsed > 0.0f)
+				ppu = parsed;
+		}
+		return ppu;
+	}
+
+	SpriteSubAssetData MakeWholeTextureSpriteData(uint32_t width,
+		uint32_t height, float pixelsPerUnit)
+	{
+		SpriteSubAssetData data;
+		data.Width = width;
+		data.Height = height;
+		data.PixelsPerUnit = pixelsPerUnit;
+		return data;
+	}
+
+	bool ResolveSpriteGeometry(const ResolvedSpriteAsset& resolved,
+		uint32_t textureWidth, uint32_t textureHeight,
+		SpriteRenderGeometry& geometry, bool& usesGeometry)
+	{
+		geometry = {};
+		usesGeometry = false;
+		if (resolved.IsSubAsset)
+		{
+			usesGeometry = true;
+			return BuildSpriteRenderGeometry(resolved.Data, textureWidth,
+				textureHeight, geometry);
+		}
+		if (resolved.WholeTexturePixelsPerUnit > 0.0f)
+		{
+			usesGeometry = true;
+			return BuildSpriteRenderGeometry(MakeWholeTextureSpriteData(textureWidth,
+				textureHeight, resolved.WholeTexturePixelsPerUnit), textureWidth,
+				textureHeight, geometry);
+		}
+		return true;
+	}
+
 	namespace {
 
 		constexpr const char* kUsageKey = "Usage";

@@ -106,7 +106,22 @@ namespace TomCat {
 		AssetHandle TextureHandle = AssetHandle(0);
 		SpriteSubAssetData Data;
 		bool IsSubAsset = false;
+		// Whole-image textures opted into pixel sizing (import setting
+		// SpriteSize=PixelsPerUnit). Zero keeps the legacy behaviour where the
+		// quad is 1x1 world units and Transform scale alone sets its size.
+		float WholeTexturePixelsPerUnit = 0.0f;
 	};
+
+	// Whole-image textures are sized like Sprite slices (pixels / PixelsPerUnit)
+	// only when their import settings contain SpriteSize=PixelsPerUnit. The PPU
+	// value comes from the texture's PixelsPerUnit setting (default 100).
+	inline constexpr const char* SpriteSizeSettingKey = "SpriteSize";
+	inline constexpr const char* SpriteSizePixelsPerUnit = "PixelsPerUnit";
+	// Returns 0 when the texture keeps legacy unit-quad sizing, the PPU otherwise.
+	[[nodiscard]] float GetWholeTexturePixelsPerUnit(const AssetImportSettings& settings);
+	// A full-image slice with a centred pivot, used to draw opted-in textures.
+	[[nodiscard]] SpriteSubAssetData MakeWholeTextureSpriteData(uint32_t width,
+		uint32_t height, float pixelsPerUnit);
 
 	struct SpriteRenderGeometry
 	{
@@ -144,6 +159,12 @@ namespace TomCat {
 	[[nodiscard]] bool BuildSpriteRenderGeometry(const SpriteSubAssetData& data,
 		uint32_t textureWidth, uint32_t textureHeight,
 		SpriteRenderGeometry& geometry);
+	// Resolves a sprite to the quad transform relative to the entity transform:
+	// identity for legacy whole textures, pixel-sized and pivot-offset otherwise.
+	// Returns false when the slice does not fit the texture.
+	[[nodiscard]] bool ResolveSpriteGeometry(const ResolvedSpriteAsset& resolved,
+		uint32_t textureWidth, uint32_t textureHeight,
+		SpriteRenderGeometry& geometry, bool& usesGeometry);
 
 	// The cooked sub-sprite envelope carries its slice plus the imported atlas
 	// bytes. A Player therefore needs neither source .tcmeta nor loose files.

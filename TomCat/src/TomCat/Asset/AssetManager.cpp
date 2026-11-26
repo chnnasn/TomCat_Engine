@@ -44,6 +44,31 @@ namespace TomCat {
 
 	namespace {
 
+		// Pixel dimensions of an imported texture: TextureArtifact header, or the
+		// decoder header for loose encoded images.
+		bool ReadCookedTextureDimensions(std::span<const uint8_t> bytes,
+			uint32_t& width, uint32_t& height)
+		{
+			width = height = 0;
+			std::string error;
+			if (IsTextureArtifact(bytes))
+			{
+				TextureArtifactView artifact;
+				if (!ParseTextureArtifact(bytes, artifact, error))
+					return false;
+				width = artifact.Width;
+				height = artifact.Height;
+			}
+			else
+			{
+				uint64_t reservation = 0;
+				if (!EstimateTextureBuildMemory(bytes, reservation, error, &width, &height))
+					return false;
+			}
+			return width != 0 && height != 0;
+		}
+
+
 		constexpr size_t kCopyBufferSize = 64 * 1024;
 		constexpr uint64_t kManagedPayloadHandle =
 			(std::numeric_limits<uint64_t>::max)();
@@ -2952,6 +2977,8 @@ namespace TomCat {
 			if (direct->Type != AssetType::Texture2D || direct->IsMissing)
 				return false;
 			sprite.TextureHandle = handle;
+			sprite.WholeTexturePixelsPerUnit =
+				GetWholeTexturePixelsPerUnit(direct->ImportSettings);
 			return true;
 		}
 		const AssetSubAsset* child = nullptr;
@@ -3979,6 +4006,33 @@ namespace TomCat {
 				}
 				cookedSourceSHA256 = imported.Artifact.SourceSHA256;
 				entry.CookedBytes = std::move(imported.Artifact.Bytes);
+				// Pixel-sized whole textures ship as a full-image Sprite envelope
+				// so the Player sizes them exactly like the Editor does, without
+				// needing the .tcmeta import settings.
+				if (metadata.Type == AssetType::Texture2D)
+				{
+					const float wholePPU =
+						GetWholeTexturePixelsPerUnit(metadata.ImportSettings);
+					if (wholePPU > 0.0f)
+					{
+						uint32_t width = 0, height = 0;
+						if (!ReadCookedTextureDimensions(entry.CookedBytes, width, height))
+						{
+							TC_Core_Error("Cannot read dimensions of pixel-sized texture {0} while cooking",
+								rawHandle);
+							return false;
+						}
+						entry.CookedBytes = BuildCookedSpriteSubAsset(handle,
+							MakeWholeTextureSpriteData(width, height, wholePPU),
+							entry.CookedBytes);
+						if (entry.CookedBytes.empty())
+						{
+							TC_Core_Error("Could not build cooked pixel-sized texture {0}",
+								rawHandle);
+							return false;
+						}
+					}
+				}
 				entry.HasCookedBytes = true;
 				entry.Size = static_cast<uint64_t>(entry.CookedBytes.size());
 			}

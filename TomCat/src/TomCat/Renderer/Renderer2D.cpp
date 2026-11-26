@@ -1109,25 +1109,54 @@ void main()
 		if (!src.Sprite)
 			return;
 		ResolvedSpriteAsset resolved;
-		if (!assets.ResolveSpriteAsset(spriteHandle, resolved)
-			|| !resolved.IsSubAsset)
+		SpriteRenderGeometry geometry;
+		bool usesGeometry = false;
+		if (!assets.ResolveSpriteAsset(spriteHandle, resolved))
 		{
 			DrawQuad(transform, src.Sprite, src.TilingFactor, tint, entityID,
 				lit);
 			return;
 		}
-		SpriteRenderGeometry geometry;
-		if (!BuildSpriteRenderGeometry(resolved.Data, src.Sprite->GetWidth(),
-			src.Sprite->GetHeight(), geometry))
+		if (!ResolveSpriteGeometry(resolved, src.Sprite->GetWidth(),
+			src.Sprite->GetHeight(), geometry, usesGeometry))
 			return;
-		const glm::mat4 spriteTransform = transform
-			* glm::translate(glm::mat4(1.0f),
+		if (!usesGeometry)
+		{
+			DrawQuad(transform, src.Sprite, src.TilingFactor, tint, entityID,
+				lit);
+			return;
+		}
+		DrawTexturedQuadRegion(transform * SpriteGeometryTransform(geometry),
+			src.Sprite, { geometry.UMin, geometry.VMin },
+			{ geometry.UMax, geometry.VMax }, tint, entityID, lit);
+	}
+
+	glm::mat4 Renderer2D::SpriteGeometryTransform(const SpriteRenderGeometry& geometry)
+	{
+		return glm::translate(glm::mat4(1.0f),
 				{ geometry.OffsetX, geometry.OffsetY, 0.0f })
 			* glm::scale(glm::mat4(1.0f),
 				{ geometry.Width, geometry.Height, 1.0f });
-		DrawTexturedQuadRegion(spriteTransform, src.Sprite,
-			{ geometry.UMin, geometry.VMin }, { geometry.UMax, geometry.VMax },
-			tint, entityID, lit);
+	}
+
+	glm::mat4 Renderer2D::GetSpriteLocalTransform(AssetHandle spriteHandle)
+	{
+		if (static_cast<uint64_t>(spriteHandle) == 0)
+			return glm::mat4(1.0f);
+		AssetManager& assets = AssetManager::Get();
+		ResolvedSpriteAsset resolved;
+		if (!assets.ResolveSpriteAsset(spriteHandle, resolved)
+			|| (!resolved.IsSubAsset && resolved.WholeTexturePixelsPerUnit <= 0.0f))
+			return glm::mat4(1.0f);
+		const Ref<Texture2D> texture = assets.LoadTexture(spriteHandle);
+		if (!texture)
+			return glm::mat4(1.0f);
+		SpriteRenderGeometry geometry;
+		bool usesGeometry = false;
+		if (!ResolveSpriteGeometry(resolved, texture->GetWidth(),
+			texture->GetHeight(), geometry, usesGeometry) || !usesGeometry)
+			return glm::mat4(1.0f);
+		return SpriteGeometryTransform(geometry);
 	}
 
 	void Renderer2D::ResetStats()
