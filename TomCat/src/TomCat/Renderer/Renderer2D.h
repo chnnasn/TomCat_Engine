@@ -10,6 +10,8 @@
 
 #include <array>
 #include <span>
+#include <string>
+#include <vector>
 
 namespace TomCat {
 
@@ -38,6 +40,40 @@ namespace TomCat {
 			uint64_t SubOrder = 0;
 			uint64_t EntityID = 0;
 		};
+
+		// Per-frame 2D scene collection results, exported by Player
+		// --render-diag. Holds the most recent Scene 2D pass.
+		struct SceneRenderDiagnostics
+		{
+			struct DrawItem
+			{
+				int32_t SortingLayer = 0;
+				int32_t OrderInLayer = 0;
+				uint64_t EntityID = 0;
+				uint64_t SpriteHandle = 0;
+				bool ColoredQuad = false;
+			};
+			static constexpr size_t MaxDrawOrderItems = 256;
+			uint64_t Sprites = 0;
+			uint64_t SpritesInactive = 0;
+			uint64_t SpritesCulled = 0;
+			uint64_t SpritesSubmitted = 0;
+			uint64_t TileCells = 0;
+			uint64_t TilesCulled = 0;
+			uint64_t TilesSubmitted = 0;
+			glm::vec2 ViewMin{ 0.0f };
+			glm::vec2 ViewMax{ 0.0f };
+			// Sorted submission order, first MaxDrawOrderItems entries; only
+			// captured while diagnostics are enabled.
+			std::vector<DrawItem> DrawOrder;
+
+			// Stable JSON for regression baselines; frame is caller supplied.
+			[[nodiscard]] std::string ToJson(uint64_t frame) const;
+		};
+		static void SetSceneDiagnosticsEnabled(bool enabled);
+		static bool IsSceneDiagnosticsEnabled();
+		static void SubmitSceneDiagnostics(SceneRenderDiagnostics diagnostics);
+		static SceneRenderDiagnostics GetSceneDiagnostics();
 
 		static SpriteSortKey MakeSpriteSortKey(const SpriteRenderer& sprite,
 			uint64_t entityID, uint64_t subOrder = 0)

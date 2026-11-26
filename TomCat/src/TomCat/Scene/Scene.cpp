@@ -993,6 +993,10 @@ namespace TomCat {
             Renderer2D::Set2DLighting(ambientLight, pointLights, shadowEdges);
 
 			auto spriteView = registry.view<Transform, SpriteRenderer>();
+			// Counters behind --render-diag. They are cheap enough to keep on;
+			// the per-item draw order is only captured while diagnostics are on.
+			Renderer2D::SceneRenderDiagnostics diagnostics;
+			const bool captureDrawOrder = Renderer2D::IsSceneDiagnosticsEnabled();
 			struct SpriteRenderItem
 			{
 				Renderer2D::SpriteSortKey SortKey;
@@ -1007,9 +1011,13 @@ namespace TomCat {
 			for (const entt::entity entity : spriteView)
 			{
 				const auto& sprite = spriteView.get<SpriteRenderer>(entity);
+				++diagnostics.Sprites;
 				if (!isVisible(entity)
 					|| !sprite.Enabled)
+				{
+					++diagnostics.SpritesInactive;
 					continue;
+				}
 				const UUID entityID = registry.get<ID>(entity).id;
 				const glm::mat4 worldTransform =
 					scene.GetRuntimeRenderTransform(entityID);
@@ -1019,7 +1027,11 @@ namespace TomCat {
 					? sprite.RuntimeSpriteOverrideHandle : sprite.SpriteHandle;
 				if (!Renderer2D::IsQuadVisible(worldTransform
 					* Renderer2D::GetSpriteLocalTransform(cullHandle), viewProjection))
+				{
+					++diagnostics.SpritesCulled;
 					continue;
+				}
+				++diagnostics.SpritesSubmitted;
 				const uint64_t sortableEntityID = static_cast<uint64_t>(entityID);
 				sprites.push_back({ Renderer2D::MakeSpriteSortKey(sprite,
 					sortableEntityID), worldTransform, sprite, sprite._Color,
@@ -1057,12 +1069,17 @@ namespace TomCat {
 				{
 					if (static_cast<uint64_t>(cell.SpriteHandle) == 0)
 						continue;
+					++diagnostics.TileCells;
 					const glm::mat4 worldTransform = rootTransform
 						* Tilemap2DRuntime::GetCellTransform(tilemap, cell, grid);
 					if (!Renderer2D::IsQuadVisible(worldTransform
 						* Renderer2D::GetSpriteLocalTransform(cell.SpriteHandle),
 						viewProjection))
+					{
+						++diagnostics.TilesCulled;
 						continue;
+					}
+					++diagnostics.TilesSubmitted;
 					SpriteRenderer renderer;
 					renderer.SpriteHandle = cell.SpriteHandle;
 					renderer._Color = cell.Tint;
@@ -1132,6 +1149,38 @@ namespace TomCat {
 					Renderer2D::DrawSprite(item.WorldTransform, renderer,
 						item.EntityID);
 				}
+			}
+
+			{
+				const glm::mat4 inverseVP = glm::inverse(viewProjection);
+				glm::vec2 minimum(std::numeric_limits<float>::max());
+				glm::vec2 maximum(std::numeric_limits<float>::lowest());
+				for (const glm::vec2 ndc : { glm::vec2(-1, -1), glm::vec2(1, 1),
+					glm::vec2(-1, 1), glm::vec2(1, -1) })
+				{
+					glm::vec4 world = inverseVP * glm::vec4(ndc, 0.0f, 1.0f);
+					if (world.w != 0.0f)
+						world /= world.w;
+					minimum = glm::min(minimum, glm::vec2(world));
+					maximum = glm::max(maximum, glm::vec2(world));
+				}
+				diagnostics.ViewMin = minimum;
+				diagnostics.ViewMax = maximum;
+				if (captureDrawOrder)
+				{
+					const size_t captured = std::min(sprites.size(),
+						Renderer2D::SceneRenderDiagnostics::MaxDrawOrderItems);
+					diagnostics.DrawOrder.reserve(captured);
+					for (size_t index = 0; index < captured; ++index)
+					{
+						const SpriteRenderItem& item = sprites[index];
+						diagnostics.DrawOrder.push_back({ item.SortKey.SortingLayer,
+							item.SortKey.OrderInLayer, item.SortKey.EntityID,
+							static_cast<uint64_t>(item.Renderer.SpriteHandle),
+							item.ColoredQuad });
+					}
+				}
+				Renderer2D::SubmitSceneDiagnostics(std::move(diagnostics));
 			}
 
 			const float previousLineWidth = Renderer2D::GetLineWidth();

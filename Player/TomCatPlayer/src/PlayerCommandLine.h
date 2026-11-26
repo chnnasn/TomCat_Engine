@@ -20,6 +20,9 @@ namespace TomCat {
 	{
 		PlayerCommandMode Mode = PlayerCommandMode::Run;
 		std::filesystem::path PackagePath;
+		// Optional --render-diag <file.json>: the latest 2D scene collection
+		// counters and draw order, rewritten atomically about once a second.
+		std::filesystem::path RenderDiagnosticsPath;
 		std::string Error;
 	};
 

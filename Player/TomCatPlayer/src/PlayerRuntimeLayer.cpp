@@ -171,9 +171,11 @@ namespace TomCat {
 	}
 
 	PlayerRuntimeLayer::PlayerRuntimeLayer(std::filesystem::path packagePath,
-		uint32_t viewportWidth, uint32_t viewportHeight)
+		uint32_t viewportWidth, uint32_t viewportHeight,
+		std::filesystem::path renderDiagnosticsPath)
 		: Layer("PlayerRuntimeLayer"), m_PackagePath(std::move(packagePath)),
-		m_ViewportWidth(viewportWidth), m_ViewportHeight(viewportHeight)
+		m_ViewportWidth(viewportWidth), m_ViewportHeight(viewportHeight),
+		m_RenderDiagnosticsPath(std::move(renderDiagnosticsPath))
 	{
 	}
 
@@ -235,6 +237,12 @@ namespace TomCat {
 				+ m_SceneManager->GetLastError());
 			return;
 		}
+		if (!m_RenderDiagnosticsPath.empty())
+		{
+			Renderer2D::SetSceneDiagnosticsEnabled(true);
+			TC_Core_Info("Writing 2D render diagnostics to '{0}'",
+				PathToUTF8(m_RenderDiagnosticsPath));
+		}
 		const AssetHandle entryScene = m_SceneManager->GetActiveSceneHandle();
 		TC_Core_Info("TomCat Player started '{0}' (entry Scene {1})",
 			PathToUTF8(assets.GetCookedPackagePath()),
@@ -243,6 +251,11 @@ namespace TomCat {
 
 	void PlayerRuntimeLayer::OnDetach()
 	{
+		if (!m_RenderDiagnosticsPath.empty())
+		{
+			WriteRenderDiagnostics();
+			Renderer2D::SetSceneDiagnosticsEnabled(false);
+		}
 		if (m_SceneManager)
 			m_SceneManager->Stop();
 		m_SceneManager.reset();
@@ -267,6 +280,9 @@ namespace TomCat {
 		}
 		if (const Ref<Scene> scene = m_SceneManager->GetActiveScene())
 			scene->OnUpdateRuntime(timestep, hasWindow);
+		if (!m_RenderDiagnosticsPath.empty() && (m_Frame % 60) == 0)
+			WriteRenderDiagnostics();
+		++m_Frame;
 		if (!m_SceneManager->CommitPendingTransition()
 			&& !m_SceneManager->GetActiveScene())
 			Fail("Scene transition failed without a recoverable active Scene: "
@@ -292,6 +308,19 @@ namespace TomCat {
 					event.GetScreenToFramebufferScaleY() });
 		}
 		return false;
+	}
+
+	void PlayerRuntimeLayer::WriteRenderDiagnostics()
+	{
+		const std::string json = Renderer2D::GetSceneDiagnostics().ToJson(m_Frame);
+		std::string error;
+		if (!FileSystem::WriteFileAtomically(m_RenderDiagnosticsPath, json, error))
+		{
+			TC_Core_Warn("Render diagnostics could not be written: {0}", error);
+			// Stop retrying every second after a persistent failure.
+			m_RenderDiagnosticsPath.clear();
+			Renderer2D::SetSceneDiagnosticsEnabled(false);
+		}
 	}
 
 	void PlayerRuntimeLayer::Fail(const std::string& message, int exitCode)

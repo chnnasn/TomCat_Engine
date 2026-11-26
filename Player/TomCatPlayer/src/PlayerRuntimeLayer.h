@@ -17,7 +17,8 @@ namespace TomCat {
 	{
 	public:
 		explicit PlayerRuntimeLayer(std::filesystem::path packagePath,
-			uint32_t viewportWidth = 1280, uint32_t viewportHeight = 720);
+			uint32_t viewportWidth = 1280, uint32_t viewportHeight = 720,
+			std::filesystem::path renderDiagnosticsPath = {});
 
 		void OnAttach() override;
 		void OnDetach() override;
@@ -27,12 +28,15 @@ namespace TomCat {
 	private:
 		bool OnWindowResize(WindowResizeEvent& event);
 		void Fail(const std::string& message, int exitCode = 5);
+		void WriteRenderDiagnostics();
 
 	private:
 		std::filesystem::path m_PackagePath;
 		uint32_t m_ViewportWidth = 1280;
 		uint32_t m_ViewportHeight = 720;
 		Scope<SceneManager> m_SceneManager;
+		std::filesystem::path m_RenderDiagnosticsPath;
+		uint64_t m_Frame = 0;
 	};
 
 }

@@ -1,6 +1,7 @@
 #include <TomCat.h>
 
 #include "Build/BuildPipeline.h"
+#include "PakInspect.h"
 
 #include "TomCat/Asset/AssetJobSystem.h"
 #include "TomCat/Asset/AssetManager.h"
@@ -49,7 +50,7 @@ namespace {
 #endif
 	}
 
-	enum class Command { Help, Cook, Build };
+	enum class Command { Help, Cook, Build, Pak };
 
 	struct Options
 	{
@@ -57,6 +58,7 @@ namespace {
 		std::filesystem::path ProjectPath;
 		std::filesystem::path OutputPath;
 		std::filesystem::path TemplatePath;
+		TomCat::CLI::PakInspectOptions Pak;
         TomCat::ScriptBuildProfile Profile = TomCat::ScriptBuildProfile::Production;
 		std::string Error;
 	};
@@ -67,7 +69,12 @@ namespace {
 			<< "TomCatCLI - deterministic headless project build/cook\n\n"
 			<< "Usage:\n"
 			<< "  TomCatCLI cook  --project <Project.tcproj> [--output <Game.tcpak>] [--development]\n"
-			<< "  TomCatCLI build --project <Project.tcproj> [--template <directory>] [--development]\n\n"
+			<< "  TomCatCLI build --project <Project.tcproj> [--template <directory>] [--development]\n"
+			<< "  TomCatCLI pak   --inspect <Game.tcpak> [--dump-textures <dir>] [--dump-scenes <dir>]\n\n"
+			<< "pak --inspect validates and lists a cooked package: manifest, build scenes,\n"
+			<< "every entry, scene entities with components and sprite references, and\n"
+			<< "texture/sprite descriptors. --dump-textures writes each texture as PNG\n"
+			<< "(Sprite slices cropped); --dump-scenes writes the cooked scene YAML.\n\n"
 			<< "Both commands compile and validate the current C# sources first. Projects\n"
 			<< "and assets must use the current format; older formats are rejected.\n";
 	}
@@ -99,6 +106,7 @@ namespace {
 		const std::string command(argv[1]);
 		if (command == "cook") result.Operation = Command::Cook;
 		else if (command == "build") result.Operation = Command::Build;
+		else if (command == "pak") result.Operation = Command::Pak;
 		else if (command == "help" || command == "--help" || command == "-h")
 			return result;
 		else
@@ -114,6 +122,21 @@ namespace {
 				if (++index >= argc) return std::nullopt;
 				return TomCat::UTF8ToPath(argv[index]);
 			};
+			if (result.Operation == Command::Pak)
+			{
+				std::filesystem::path* target = option == "--inspect" ? &result.Pak.PackagePath
+					: option == "--dump-textures" ? &result.Pak.DumpTexturesDirectory
+					: option == "--dump-scenes" ? &result.Pak.DumpScenesDirectory : nullptr;
+				if (!target)
+				{
+					result.Error = "unknown pak option: " + option;
+					return result;
+				}
+				const auto parsed = value();
+				if (!parsed || parsed->empty()) { result.Error = option + " requires a path"; return result; }
+				*target = *parsed;
+				continue;
+			}
 			if (option == "--development") result.Profile = TomCat::ScriptBuildProfile::Development;
             else if (option == "--project")
 			{
@@ -138,6 +161,16 @@ namespace {
 				result.Error = "unknown option: " + TomCat::PathToUTF8(option);
 				return result;
 			}
+		}
+		if (result.Operation == Command::Pak)
+		{
+			if (result.Pak.PackagePath.empty())
+				result.Error = "pak requires --inspect <Game.tcpak>";
+			else if (!MakeAbsolute(result.Pak.PackagePath, "--inspect", result.Error)
+				|| !MakeAbsolute(result.Pak.DumpTexturesDirectory, "--dump-textures", result.Error)
+				|| !MakeAbsolute(result.Pak.DumpScenesDirectory, "--dump-scenes", result.Error))
+				return result;
+			return result;
 		}
 		if (result.ProjectPath.empty())
 			result.Error = "--project is required";
@@ -285,6 +318,8 @@ int main(int argc, char** nativeArgs)
 	}
 	else if (options.Operation == Command::Help)
 		PrintHelp();
+	else if (options.Operation == Command::Pak)
+		exitCode = TomCat::CLI::InspectPackage(options.Pak);
 	else
 		exitCode = Run(options);
 	TomCat::Log::Shutdown();

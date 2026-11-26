@@ -51,7 +51,12 @@ TomCat.exe --cli build --project C:/Game/Game.tcproj
 | `--project <路径>` | 两者 | 必填，指定 `.tcproj`；含空格的路径需加引号。 |
 | `--output <路径>` | 仅 `cook` | 默认写入 `<项目>/Build/Game.tcpak`。 |
 | `--template <目录>` | 仅 `build` | 指定 Player 模板；发布位置仍为项目的 Build 目录。 |
-| `--development` | 两者 | 使用未优化的 Development C#，代替默认优化的 Production C#。 |
+| `--development` | `cook`、`build` | 使用未优化的 Development C#，代替默认优化的 Production C#。 |
+| `--inspect <Game.tcpak>` | 仅 `pak` | 必填，要校验并列出内容的包。 |
+| `--dump-textures <目录>` | 仅 `pak` | 把每个纹理条目写成 PNG。 |
+| `--dump-scenes <目录>` | 仅 `pak` | 把每个 cook 后的 Scene/Prefab YAML 落盘。 |
+
+`TomCatCLI pak --inspect <Game.tcpak>` 不需要项目：按 Player 的规则校验包，然后列出启动清单、构建场景和每个条目的类型与大小。场景会列出实体、组件和 `SpriteRenderer` 引用的句柄，句柄不在包里时标记 `NOT IN PACKAGE`；纹理会列出尺寸、格式，以及 Sprite 的 Rect、Pivot、PPU 和世界尺寸（尺寸只由 Transform 决定的整图显示为 unit quad）。`--dump-textures` 写出首级 mip 为 `<句柄>.png`，Sprite 子资源按 Rect 裁剪。
 
 使用 `TomCatCLI help`（或 `--help` / `-h`）查看用法；相对路径按调用者当前工作目录解析。
 
@@ -66,7 +71,9 @@ TCPAK 只读写 v8，逐条目 SHA-256 摘要为必需字段。
 | 退出码 | 含义 |
 | --- | --- |
 | 0 | 执行成功或显示帮助 |
+| 1 | `pak`：至少一个条目无法读取、解码或写出 |
 | 2 | 参数错误 |
+| 4 | `pak`：包校验失败 |
 | 5 | 项目加载失败 |
 | 6 | 项目模块或资产注册表初始化失败 |
 | 7 | 未配置已启用的入口场景，或入口场景缺失、不是场景资源 |

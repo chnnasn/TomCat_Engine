@@ -11,6 +11,9 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
+#include <cstdio>
+#include <atomic>
+#include <mutex>
 #include <vector>
 
 namespace TomCat {
@@ -1157,6 +1160,78 @@ void main()
 			texture->GetHeight(), geometry, usesGeometry) || !usesGeometry)
 			return glm::mat4(1.0f);
 		return SpriteGeometryTransform(geometry);
+	}
+
+	namespace {
+		std::atomic<bool> s_SceneDiagnosticsEnabled{ false };
+		std::mutex s_SceneDiagnosticsMutex;
+		Renderer2D::SceneRenderDiagnostics s_SceneDiagnostics;
+	}
+
+	std::string Renderer2D::SceneRenderDiagnostics::ToJson(uint64_t frame) const
+	{
+		const auto number = [](float value)
+		{
+			if (!std::isfinite(value))
+				return std::string("null");
+			char buffer[32];
+			std::snprintf(buffer, sizeof(buffer), "%.6g", static_cast<double>(value));
+			return std::string(buffer);
+		};
+		const Statistics stats = Renderer2D::GetStats();
+		std::string json;
+		json.reserve(256 + DrawOrder.size() * 96);
+		json += "{\n  \"frame\": " + std::to_string(frame);
+		json += ",\n  \"view\": { \"minX\": " + number(ViewMin.x)
+			+ ", \"minY\": " + number(ViewMin.y)
+			+ ", \"maxX\": " + number(ViewMax.x)
+			+ ", \"maxY\": " + number(ViewMax.y) + " }";
+		json += ",\n  \"sprites\": { \"total\": " + std::to_string(Sprites)
+			+ ", \"inactive\": " + std::to_string(SpritesInactive)
+			+ ", \"culled\": " + std::to_string(SpritesCulled)
+			+ ", \"submitted\": " + std::to_string(SpritesSubmitted) + " }";
+		json += ",\n  \"tiles\": { \"cells\": " + std::to_string(TileCells)
+			+ ", \"culled\": " + std::to_string(TilesCulled)
+			+ ", \"submitted\": " + std::to_string(TilesSubmitted) + " }";
+		json += ",\n  \"renderer\": { \"drawCalls\": " + std::to_string(stats.DrawCalls)
+			+ ", \"quads\": " + std::to_string(stats.QuadCount)
+			+ ", \"circles\": " + std::to_string(stats.CircleCount)
+			+ ", \"lines\": " + std::to_string(stats.LineCount) + " }";
+		json += ",\n  \"drawOrder\": [";
+		for (size_t index = 0; index < DrawOrder.size(); ++index)
+		{
+			const DrawItem& item = DrawOrder[index];
+			json += index == 0 ? "\n    " : ",\n    ";
+			json += "{ \"layer\": " + std::to_string(item.SortingLayer)
+				+ ", \"order\": " + std::to_string(item.OrderInLayer)
+				+ ", \"entity\": \"" + std::to_string(item.EntityID)
+				+ "\", \"sprite\": \"" + std::to_string(item.SpriteHandle)
+				+ "\", \"coloredQuad\": " + (item.ColoredQuad ? "true" : "false") + " }";
+		}
+		json += DrawOrder.empty() ? "]\n}\n" : "\n  ]\n}\n";
+		return json;
+	}
+
+	void Renderer2D::SetSceneDiagnosticsEnabled(bool enabled)
+	{
+		s_SceneDiagnosticsEnabled.store(enabled, std::memory_order_relaxed);
+	}
+
+	bool Renderer2D::IsSceneDiagnosticsEnabled()
+	{
+		return s_SceneDiagnosticsEnabled.load(std::memory_order_relaxed);
+	}
+
+	void Renderer2D::SubmitSceneDiagnostics(SceneRenderDiagnostics diagnostics)
+	{
+		std::lock_guard lock(s_SceneDiagnosticsMutex);
+		s_SceneDiagnostics = std::move(diagnostics);
+	}
+
+	Renderer2D::SceneRenderDiagnostics Renderer2D::GetSceneDiagnostics()
+	{
+		std::lock_guard lock(s_SceneDiagnosticsMutex);
+		return s_SceneDiagnostics;
 	}
 
 	void Renderer2D::ResetStats()

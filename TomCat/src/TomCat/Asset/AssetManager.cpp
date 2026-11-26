@@ -3245,6 +3245,27 @@ namespace TomCat {
 			? m_Registry.GetFileSystemPath(handle) : std::filesystem::path{};
 	}
 
+	std::vector<AssetHandle> AssetManager::GetCookedEntryHandles() const
+	{
+		std::vector<std::pair<uint64_t, AssetHandle>> ordered;
+		if (IsCookedPackageMounted())
+		{
+			ordered.reserve(m_CookedEntries.size());
+			for (const auto& [handle, entry] : m_CookedEntries)
+				ordered.emplace_back(entry.Offset, handle);
+		}
+		std::sort(ordered.begin(), ordered.end(), [](const auto& left, const auto& right)
+		{
+			return left.first != right.first ? left.first < right.first
+				: static_cast<uint64_t>(left.second) < static_cast<uint64_t>(right.second);
+		});
+		std::vector<AssetHandle> handles;
+		handles.reserve(ordered.size());
+		for (const auto& item : ordered)
+			handles.push_back(item.second);
+		return handles;
+	}
+
 	bool AssetManager::TryGetCookedAssetRange(AssetHandle handle,
 		CookedAssetRange& range) const
 	{

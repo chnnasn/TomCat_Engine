@@ -17,6 +17,7 @@
 #include "stb_image.h"
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -1618,6 +1619,10 @@ namespace {
 
 		Require(assets.MountCookedPackage(package),
 			"Player could not mount the pixel-sized package");
+		const std::vector<TomCat::AssetHandle> entries = assets.GetCookedEntryHandles();
+		Require(std::find(entries.begin(), entries.end(), sized) != entries.end()
+			&& std::find(entries.begin(), entries.end(), legacy) != entries.end(),
+			"GetCookedEntryHandles omitted packaged textures");
 		std::vector<uint8_t> cooked;
 		TomCat::AssetType cookedType = TomCat::AssetType::None;
 		Require(assets.ReadAssetBytes(sized, cooked, &cookedType)

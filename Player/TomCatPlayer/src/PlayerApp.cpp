@@ -283,8 +283,19 @@ namespace TomCat {
 				{
 					case PlayerCommandMode::Run:
 					{
+						// Resolve against the launch directory, not the executable's.
+						std::filesystem::path diagnosticsPath =
+							command.RenderDiagnosticsPath;
+						if (!diagnosticsPath.empty() && diagnosticsPath.is_relative())
+						{
+							std::error_code currentError;
+							const auto current = std::filesystem::current_path(currentError);
+							if (!currentError)
+								diagnosticsPath = (current / diagnosticsPath).lexically_normal();
+						}
 						PushLayer(new PlayerRuntimeLayer(plan.PackagePath,
-							plan.ViewportWidth, plan.ViewportHeight));
+							plan.ViewportWidth, plan.ViewportHeight,
+							std::move(diagnosticsPath)));
 						break;
 					}
 					case PlayerCommandMode::ValidatePackage:

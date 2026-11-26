@@ -31,17 +31,58 @@ namespace TomCat {
 			result.Mode = PlayerCommandMode::ShowVersion;
 			return result;
 		}
-		if (args.Count == 3 && (option == "--package" || option == "--validate-package"))
+		if (option == "--validate-package")
 		{
-			result.Mode = option == "--package"
-				? PlayerCommandMode::Run : PlayerCommandMode::ValidatePackage;
-			result.PackagePath = UTF8ToPath(args[2] ? args[2] : "");
-			if (!result.PackagePath.empty())
-				return result;
-			result.Error = "the package path cannot be empty";
+			if (args.Count == 3)
+			{
+				result.Mode = PlayerCommandMode::ValidatePackage;
+				result.PackagePath = UTF8ToPath(args[2] ? args[2] : "");
+				if (!result.PackagePath.empty())
+					return result;
+				result.Error = "the package path cannot be empty";
+			}
+			else
+				result.Error = "unsupported or incomplete command line";
+			result.Mode = PlayerCommandMode::Invalid;
+			return result;
 		}
-		else
-			result.Error = "unsupported or incomplete command line";
+
+		// Run mode: each option at most once, each with a non-empty value.
+		bool sawPackage = false;
+		for (int index = 1; index < args.Count; ++index)
+		{
+			const std::string_view name = args[index] ? args[index] : "";
+			const bool known = name == "--package" || name == "--render-diag";
+			if (!known || index + 1 >= args.Count)
+			{
+				result.Error = "unsupported or incomplete command line";
+				break;
+			}
+			++index;
+			const std::filesystem::path value = UTF8ToPath(args[index] ? args[index] : "");
+			if (value.empty())
+			{
+				result.Error = name == "--package"
+					? "the package path cannot be empty"
+					: "--render-diag requires a non-empty path";
+				break;
+			}
+			std::filesystem::path& target = name == "--package"
+				? result.PackagePath : result.RenderDiagnosticsPath;
+			if (!target.empty())
+			{
+				result.Error = std::string(name) + " was given more than once";
+				break;
+			}
+			target = value;
+			sawPackage = sawPackage || name == "--package";
+		}
+		if (result.Error.empty())
+		{
+			if (!sawPackage)
+				result.PackagePath = "Game.tcpak";
+			return result;
+		}
 
 		result.Mode = PlayerCommandMode::Invalid;
 		return result;
@@ -97,6 +138,9 @@ namespace TomCat {
 			"Usage:\n"
 			"  TomCatPlayer                          Run Game.tcpak beside the executable\n"
 			"  TomCatPlayer --package <path>         Run a cooked package\n"
+			"  TomCatPlayer [--package <path>] --render-diag <file.json>\n"
+			"                                        Also write 2D render diagnostics\n"
+			"                                        (counts, view bounds, draw order)\n"
 			"  TomCatPlayer --validate-package <path> Validate package and private runtime, then exit\n"
 			"  TomCatPlayer --version                Print compatibility versions\n"
 			"  TomCatPlayer --help                   Show this help\n";

@@ -271,6 +271,9 @@ namespace TomCat {
 		bool MountCookedPackage(const std::filesystem::path& packagePath);
 		void UnmountCookedPackage();
 		bool IsCookedPackageMounted() const { return !m_CookedPackagePath.empty(); }
+		// Handles of every entry in the mounted package, sorted by package
+		// offset. Read-only inspection support for TomCatCLI pak --inspect.
+		std::vector<AssetHandle> GetCookedEntryHandles() const;
 		const std::filesystem::path& GetCookedPackagePath() const { return m_CookedPackagePath; }
 		AssetHandle GetCookedEntrySceneHandle() const
 		{

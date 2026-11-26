@@ -11,7 +11,22 @@ Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe cook --project C:/Game/
 Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe build --project C:/Game/Game.tcproj
 ```
 
-Both commands perform a fresh managed compile using the Production profile by default, validate assets, and use
+`pak --inspect` reads an existing package without a project:
+
+```powershell
+Tools/bin/Release-windows-x86_64/TomCatCLI/TomCatCLI.exe pak --inspect C:/Game/Build/Game.tcpak --dump-textures C:/tmp/tex --dump-scenes C:/tmp/scenes
+```
+
+It validates the package exactly as the Player does, then prints the boot manifest,
+the build scenes, and every entry with its type and size. Each scene is listed with its
+entities, their components and their `SpriteRenderer` handle; a handle that is not in
+the package is marked `NOT IN PACKAGE`. Each texture is listed with its dimensions and
+format, and with its Sprite rect, pivot, PPU and world size, or as a unit quad when its
+size comes from the Transform alone. `--dump-textures` writes each texture's first mip
+as `<handle>.png` (Sprite slices are cropped to their rect); `--dump-scenes` writes the
+cooked scene and Prefab YAML.
+
+`cook` and `build` perform a fresh managed compile using the Production profile by default, validate assets, and use
 the project's enabled entry scene. Only current project, scene, component and package formats are supported; unsupported versions are rejected without rewriting the inputs.
 
 Windows Editor releases contain the CLI, Managed toolchain, and Player
@@ -56,7 +71,10 @@ pass the resulting directory with `build --template <directory>`.
 | `--project <path>` | Both | Required `.tcproj` path; quote paths containing spaces. |
 | `--output <path>` | `cook` only | Defaults to `<project>/Build/Game.tcpak`. |
 | `--template <directory>` | `build` only | Overrides Player template discovery; build output remains in the project's Build directory. |
-| `--development` | Both | Selects unoptimized Development C# instead of optimized Production C#. |
+| `--development` | `cook`, `build` | Selects unoptimized Development C# instead of optimized Production C#. |
+| `--inspect <Game.tcpak>` | `pak` only | Required. Package to validate and list. |
+| `--dump-textures <directory>` | `pak` only | Writes every texture entry as PNG. |
+| `--dump-scenes <directory>` | `pak` only | Writes every cooked Scene/Prefab YAML entry. |
 
 Use `TomCatCLI help` (or `--help` / `-h`) for usage. Relative paths resolve from
 the caller's working directory.
@@ -72,7 +90,9 @@ TCPAK output and input use v8 with mandatory per-entry SHA-256 digests.
 | Exit code | Meaning |
 | --- | --- |
 | 0 | Success or help |
+| 1 | `pak`: at least one entry could not be read, decoded or written |
 | 2 | Invalid arguments |
+| 4 | `pak`: package failed validation |
 | 5 | Project load failed (including unsupported format or missing settings) |
 | 6 | Module or asset registry initialization failed |
 | 7 | No enabled entry scene, or it is missing or not a Scene asset |
