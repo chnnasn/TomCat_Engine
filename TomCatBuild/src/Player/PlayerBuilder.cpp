@@ -2,6 +2,7 @@
 
 #include <TomCat/Asset/AssetManager.h>
 #include <TomCat/Asset/ContentHash.h>
+#include <TomCat/Asset/TextureArtifact.h>
 #include <fstream>
 #include <TomCat/Core/ApplicationPaths.h>
 #include <TomCat/Core/Log.h>
@@ -59,6 +60,10 @@ namespace TomCat {
 			std::filesystem::path RelativePath;
 			std::string SHA256;
 		};
+
+#ifdef TC_PLATFORM_WINDOWS
+#include "WindowsPlayerIcon.inl"
+#endif
 
 		struct TemplateManifest
 		{
@@ -333,7 +338,7 @@ namespace TomCat {
             // The shader compiler is linked statically into the Linux Player.
             return false;
 #else
-            return key == "assimp-vc143-mt.dll" || key == "shaderc_shared.dll" || key == "msvcp140.dll" ||
+            return key == "tomcatlauncher.exe" || key == "assimp-vc143-mt.dll" || key == "shaderc_shared.dll" || key == "msvcp140.dll" ||
                 key == "vcruntime140.dll" || key == "vcruntime140_1.dll";
 #endif
 		}
@@ -440,7 +445,7 @@ namespace TomCat {
 					!hasRuntimeConfig || !hasDeps || !hasHostFxr || !hasCoreClr ||
                     !hasTextureShader || !hasFlatColorShader ||
 #ifdef TC_PLATFORM_WINDOWS
-                    !hasShaderCompiler || !seen.contains("msvcp140.dll") ||
+                    !seen.contains("tomcatlauncher.exe") || !hasShaderCompiler || !seen.contains("msvcp140.dll") ||
                     !seen.contains("vcruntime140.dll") || !seen.contains("vcruntime140_1.dll") ||
 #endif
 					hostFxrVersions.size() != 1 || runtimeVersions.size() != 1)
@@ -735,34 +740,32 @@ namespace TomCat {
 			return fail(std::move(message));
 		};
 
-		for (const TemplateFile& file : manifest.Files)
-		{
-			if (!CopyTemplateFile(request.TemplateDirectory / file.RelativePath,
-				staging / file.RelativePath, errorMessage))
+        const std::filesystem::path productPlayer = staging / playerExecutableName;
+#ifdef TC_PLATFORM_WINDOWS
+        const auto dataName = UTF8ToPath(productStem + "_Data");
+        const auto runtimeRoot = staging / dataName;
+        auto stagedFile = [&](const std::filesystem::path& path) {
+            return NormalizedKey(path) == "tomcatlauncher.exe" ? productPlayer : runtimeRoot / path;
+        };
+#else
+        const auto runtimeRoot = staging;
+        auto stagedFile = [&](const std::filesystem::path& path) {
+            return NormalizedKey(path) == PlayerKey ? productPlayer : runtimeRoot / path;
+        };
+#endif
+        for (const TemplateFile& file : manifest.Files)
+        {
+            if (!CopyTemplateFile(request.TemplateDirectory / file.RelativePath,
+				stagedFile(file.RelativePath), errorMessage))
 				return failStaged(std::move(errorMessage));
 			std::string stagedHash;
-			if (!ComputeFileSHA256(staging / file.RelativePath, stagedHash,
+			if (!ComputeFileSHA256(stagedFile(file.RelativePath), stagedHash,
 				errorMessage))
 				return failStaged(std::move(errorMessage));
 			if (stagedHash != file.SHA256)
 				return failStaged("A Player template file changed while it was being staged: '" +
 					PathToUTF8(file.RelativePath) + "'.");
 		}
-		const std::filesystem::path templatePlayer = staging / PlayerFilename;
-		const std::filesystem::path productPlayer = staging / playerExecutableName;
-#ifdef TC_PLATFORM_LINUX
-        if (playerExecutableName != PlayerFilename)
-#else
-        if (NormalizedKey(playerExecutableName) != PlayerKey)
-#endif
-		{
-			error.clear();
-			std::filesystem::rename(templatePlayer, productPlayer, error);
-			if (error)
-				return failStaged("Could not apply the Player ProductName to its executable: "
-					+ error.message());
-		}
-
 		AssetManager& assets = AssetManager::Get();
 		bool cooked = false;
 		{
@@ -774,17 +777,19 @@ namespace TomCat {
 				std::move(request.ManagedPdb)))
 				return failStaged("The fresh managed payload was rejected.");
 			PayloadGuard payloadGuard{ assets };
-			cooked = assets.CookToPackage(staging / "Game.tcpak", request.EntryScene);
+			cooked = assets.CookToPackage(runtimeRoot / "Game.tcpak", request.EntryScene);
 		}
 		if (!cooked)
 			return failStaged("Cooking Game.tcpak failed. See preceding diagnostics.");
 
-		std::unordered_set<std::string> expected{ "game.tcpak" };
+		#ifdef TC_PLATFORM_WINDOWS
+        if (!EmbedWindowsPlayerIcon(productPlayer, request.ProjectInstance->GetPlayerSettings().Icon, errorMessage))
+            return failStaged("Could not embed the selected Player icon: " + errorMessage);
+#endif
+        std::unordered_set<std::string> expected{ NormalizedKey((runtimeRoot / "Game.tcpak").lexically_relative(staging)) };
 		for (const TemplateFile& file : manifest.Files)
 		{
-			const std::string key = NormalizedKey(file.RelativePath);
-			expected.emplace(key == PlayerKey
-				? NormalizedKey(playerExecutableName) : key);
+			expected.emplace(NormalizedKey(stagedFile(file.RelativePath).lexically_relative(staging)));
 		}
 		std::unordered_set<std::string> actual;
 		std::filesystem::recursive_directory_iterator iterator(staging,

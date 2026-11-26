@@ -5,6 +5,8 @@
 #include <TomCat/Core/ApplicationPaths.h>
 #include <TomCat/Core/CrashReporter.h>
 #include <TomCat/Asset/TextureArtifact.h>
+#include <TomCat/Asset/SpriteAsset.h>
+#include <TomCat/Utils/PngWriter.h>
 #include <TomCat/Runtime/RuntimeCompatibility.h>
 #include <TomCat/Scripting/ScriptTypes.h>
 #include <TomCat/Utils/FileSystemUtils.h>
@@ -103,11 +105,16 @@ namespace TomCat {
 				return {};
 			}
 			std::string extension = ".image";
-			if (IsTextureArtifact(bytes))
+			ResolvedSpriteAsset sprite;
+            std::span<const uint8_t> textureBytes = bytes;
+            std::span<const uint8_t> atlasBytes;
+            if (ParseCookedSpriteSubAsset(bytes, sprite, atlasBytes))
+                textureBytes = atlasBytes;
+            if (IsTextureArtifact(textureBytes))
 			{
 				TextureArtifactView artifact;
 				std::string decodeError;
-				if (!ParseTextureArtifact(bytes, artifact, decodeError)
+				if (!ParseTextureArtifact(textureBytes, artifact, decodeError)
 					|| artifact.Mips.empty())
 				{
 					warning = "the cooked window icon artifact is invalid: " + decodeError;
@@ -122,54 +129,19 @@ namespace TomCat {
 					return {};
 				}
 
-				const uint64_t pixelBytes = static_cast<uint64_t>(mip.Width)
-					* mip.Height * 4ull;
-				if (mip.Width == 0 || mip.Height == 0
-					|| pixelBytes > (std::numeric_limits<uint32_t>::max)() - 54ull
-					|| rgba.size() != static_cast<size_t>(pixelBytes))
-				{
-					warning = "the cooked window icon dimensions are invalid";
-					return {};
-				}
-
-				std::vector<uint8_t> bitmap(54 + static_cast<size_t>(pixelBytes), 0);
-				auto writeU16 = [&bitmap](size_t offset, uint16_t value)
-				{
-					bitmap[offset] = static_cast<uint8_t>(value);
-					bitmap[offset + 1] = static_cast<uint8_t>(value >> 8);
-				};
-				auto writeU32 = [&bitmap](size_t offset, uint32_t value)
-				{
-					for (uint32_t byte = 0; byte < 4; ++byte)
-						bitmap[offset + byte] = static_cast<uint8_t>(value >> (byte * 8));
-				};
-				writeU16(0, 0x4d42);
-				writeU32(2, static_cast<uint32_t>(bitmap.size()));
-				writeU32(10, 54);
-				writeU32(14, 40);
-				writeU32(18, mip.Width);
-				writeU32(22, mip.Height);
-				writeU16(26, 1);
-				writeU16(28, 32);
-				writeU32(34, static_cast<uint32_t>(pixelBytes));
-				for (uint32_t row = 0; row < mip.Height; ++row)
-				{
-					const uint32_t sourceRow = mip.Height - 1 - row;
-					for (uint32_t column = 0; column < mip.Width; ++column)
-					{
-						const size_t source =
-							(static_cast<size_t>(sourceRow) * mip.Width + column) * 4;
-						const size_t destination = 54
-							+ (static_cast<size_t>(row) * mip.Width + column) * 4;
-						bitmap[destination] = rgba[source + 2];
-						bitmap[destination + 1] = rgba[source + 1];
-						bitmap[destination + 2] = rgba[source];
-						bitmap[destination + 3] = rgba[source + 3];
-					}
-				}
-				bytes = std::move(bitmap);
-				extension = ".bmp";
-			}
+                bytes = EncodePngRGBABottomUp(mip.Width, mip.Height, rgba);
+                if (bytes.empty())
+                {
+                    warning = "the cooked window icon dimensions are invalid";
+                    return {};
+                }
+                extension = ".png";
+            }
+            else if (textureBytes.data() != bytes.data())
+            {
+                std::vector<uint8_t> encoded(textureBytes.begin(), textureBytes.end());
+                bytes = std::move(encoded);
+            }
 
 			const std::filesystem::path iconPath = cacheDirectory /
 				("WindowIcon-" + std::to_string(static_cast<uint64_t>(icon)) + extension);

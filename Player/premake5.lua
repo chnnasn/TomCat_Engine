@@ -20,3 +20,6 @@ group ""
 
 include "../TomCat"
 include "TomCatPlayer"
+if os.target() == "windows" then
+    include "TomCatLauncher"
+end

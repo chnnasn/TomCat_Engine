@@ -156,6 +156,7 @@ foreach ($internalPath in @($stagingFull, $backupFull)) {
 $published = $false
 New-Item -ItemType Directory -Path $stagingFull -Force | Out-Null
 try {
+    Copy-TemplateFile -Source (Join-Path $repositoryRoot "Player\bin\$outputName\TomCatLauncher\TomCatLauncher.exe") -RelativePath "TomCatLauncher.exe" -Root $stagingFull
     Copy-TemplateFile -Source $playerExecutable -RelativePath "TomCatPlayer.exe" -Root $stagingFull
     $shaderDll = Join-Path $playerRoot "shaderc_shared.dll"
     if (-not (Test-Path -LiteralPath $shaderDll -PathType Leaf)) {

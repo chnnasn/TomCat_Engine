@@ -290,7 +290,7 @@
 				}
 				ImGui::EndDragDropTarget();
 			}
-			ImGui::PushTextWrapPos(0.0f); ImGui::TextDisabled("Select an icon, or drag a Texture2D asset onto the field."); ImGui::PopTextWrapPos();
+			ImGui::PushTextWrapPos(0.0f); ImGui::TextDisabled("Select an imported image (for example, PNG), or drag a Texture2D here. Windows builds use it for the executable and game window."); ImGui::PopTextWrapPos();
 
 			ImGui::Spacing();
 			ImGui::TextUnformatted("Display");

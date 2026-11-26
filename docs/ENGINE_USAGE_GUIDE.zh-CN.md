@@ -451,3 +451,9 @@ TomCatPlayer --package Game.tcpak --headless --fixed-delta 0.0166667 `
   `docs/README.md` 为索引）。
 
 刚体属性 `Rigidbody2D.GravityScale` 默认为 1，设为 0 可由角色脚本独立积分重力。后处理组件启用 `RotatingIris` 时，MaskProgress 从 0 到 1 将遮罩中心开口旋转一周并收拢。
+
+### Windows 游戏发行目录与图标
+
+编辑器的 Build Player 与命令行 `TomCatCLI build` 使用同一导出流程。Windows x64 发行目录根部包含 `<产品名>.exe` 和 `<产品名>_Data/`。数据目录收纳 Game.tcpak、运行时、动态库和着色器。双击根目录的程序即可运行游戏，无需控制台。
+
+在 Project Settings → Player → Icon 中，选择已导入的 Texture2D，或从资源浏览器将 PNG 等纹理拖到该字段。重新导出后，资源管理器中的 EXE 图标与游戏窗口图标均来自该设置。更换图标只需修改项目设置并重新导出。

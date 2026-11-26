@@ -51,7 +51,7 @@ try {
     $build = Join-Path $project 'Build/CoinRunner'
     $detached = Join-Path $root 'Detached'
     Copy-Item -LiteralPath $build -Destination $detached -Recurse
-    $package = Join-Path $build 'Game.tcpak'
+    $package = Join-Path $build 'CoinRunner_Data/Game.tcpak'
     $before = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash
     [IO.File]::WriteAllText("$module/module.tomcat", $manifest + "Dependencies: [Absent]`n")
     & $cli cook --project "$project/Project.tcproj" --output $package
@@ -59,7 +59,7 @@ try {
     if ((Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -ne $before) {
         throw 'Failed cook modified the previous package.'
     }
-    $bytes = [IO.File]::ReadAllBytes((Join-Path $detached 'Game.tcpak'))
+    $bytes = [IO.File]::ReadAllBytes((Join-Path $detached 'CoinRunner_Data/Game.tcpak'))
     $header = [BitConverter]::ToUInt32($bytes, 12)
     $count = [BitConverter]::ToUInt64($bytes, 16)
     $moduleOffset = $null
@@ -74,7 +74,7 @@ try {
     $bytes[[int]$moduleOffset] = $bytes[[int]$moduleOffset] -bxor 1
     $corrupt = Join-Path $detached 'Corrupt.tcpak'
     [IO.File]::WriteAllBytes($corrupt, $bytes)
-    & "$detached/CoinRunner.exe" --validate-package $corrupt
+    & "$detached/CoinRunner_Data/TomCatPlayer.exe" --validate-package $corrupt
     if ($LASTEXITCODE -eq 0) { throw 'Corrupt native module payload was accepted.' }
     Remove-Item -LiteralPath $corrupt
     Move-Item -LiteralPath $project -Destination (Join-Path $root 'HiddenAuthoring')

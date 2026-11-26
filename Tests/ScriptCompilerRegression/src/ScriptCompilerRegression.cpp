@@ -1511,7 +1511,7 @@ namespace {
 			projectPath.parent_path(), "TomCatCLI build");
 		Require(std::filesystem::is_regular_file(builtPlayerExecutable),
 			"TomCatCLI build returned success without the Player executable");
-		const std::filesystem::path builtPackage = buildOutput / "Game.tcpak";
+		const std::filesystem::path builtPackage = buildOutput / "Compiled Script E2E_Data" / "Game.tcpak";
 		const uintmax_t builtPackageSize =
 			std::filesystem::file_size(builtPackage, sizeError);
 		Require(!sizeError && builtPackageSize != 0,
@@ -2290,11 +2290,11 @@ public sealed class BulletProbe : MonoBehaviour
 					== "Compiled Script E2E.exe",
 				"PlayerBuilder did not apply the sanitized ProductName to the export directory and executable");
 			Require(std::filesystem::is_regular_file(
-				playerResult.OutputDirectory / "Game.tcpak"),
+				playerResult.OutputDirectory / "Compiled Script E2E_Data" / "Game.tcpak"),
 				"PlayerBuilder output omitted Game.tcpak");
 			builtPlayerExecutable = playerResult.PlayerExecutable;
 			const auto publishedPackage = ReadBytes(
-				playerResult.OutputDirectory / "Game.tcpak");
+				playerResult.OutputDirectory / "Compiled Script E2E_Data" / "Game.tcpak");
 			const auto publishedExecutable = ReadBytes(builtPlayerExecutable);
 			tamperedRequest.TemplateDirectory = environment.Root / "TamperedTemplate";
 			std::error_code templateCopyError;
@@ -2322,7 +2322,7 @@ public sealed class BulletProbe : MonoBehaviour
 				std::move(tamperedRequest));
 			Require(!rejectedBuild.Succeeded,
 				"PlayerBuilder accepted a template whose file no longer matches its SHA-256");
-			Require(ReadBytes(playerResult.OutputDirectory / "Game.tcpak")
+			Require(ReadBytes(playerResult.OutputDirectory / "Compiled Script E2E_Data" / "Game.tcpak")
 					== publishedPackage
 				&& ReadBytes(builtPlayerExecutable) == publishedExecutable,
 				"rejected template build changed the last successful Player output");
