@@ -58,6 +58,8 @@ namespace TomCat {
 
 		virtual void Bind() = 0;
 		virtual void Unbind() = 0;
+		// Composite color attachment zero onto the desktop back buffer at a bottom-left rectangle.
+		virtual void PresentToWindow(uint32_t x, uint32_t y, uint32_t width, uint32_t height) = 0;
 		virtual void BindDepthAttachment(uint32_t slot) const = 0;
 		virtual void ClearDepth() = 0;
 

@@ -3369,7 +3369,7 @@ namespace {
 			&& ReadLittleEndian32(validPackage, 84) == 768
 			&& ReadLittleEndian64(validPackage, 88)
 				== static_cast<uint64_t>(iconHandle)
-			&& ReadLittleEndian32(validPackage, 96) == 0
+			&& ReadLittleEndian32(validPackage, 96) == 8
 			&& ReadLittleEndian64(validPackage, buildSceneOffset)
 				== static_cast<uint64_t>(secondaryHandle)
 			&& ReadLittleEndian64(validPackage, buildSceneOffset + sizeof(uint64_t))
@@ -3453,7 +3453,7 @@ namespace {
 			"tcpak loader accepted obsolete package version 4");
 
 		std::vector<uint8_t> unknownBootFlags = validPackage;
-		WriteLittleEndian32(unknownBootFlags, 96, 4);
+		WriteLittleEndian32(unknownBootFlags, 96, 16);
 		const std::filesystem::path unknownBootFlagsPath =
 			environment.Root / "Build" / "UnknownBootFlags.tcpak";
 		WriteBinaryFile(unknownBootFlagsPath, unknownBootFlags);

@@ -299,23 +299,26 @@
 			ImGui::TextWrapped("Desktop Player options are preserved for export; browser preview follows its Game view.");
 			ImGui::BeginDisabled();
 #endif
-			if (ImGui::InputScalar(settingRow("Width").c_str(), ImGuiDataType_U32,
-				&m_PlayerSettingsDraft.Width))
-				PersistPlayerSettingsDraft();
-			if (ImGui::InputScalar(settingRow("Height").c_str(), ImGuiDataType_U32,
-				&m_PlayerSettingsDraft.Height))
-				PersistPlayerSettingsDraft();
-			const char* windowModes[] = {
-				"Windowed", "Borderless", "Exclusive Fullscreen"
-			};
-			int windowMode = static_cast<int>(m_PlayerSettingsDraft.WindowMode);
-			if (ImGui::Combo(settingRow("Window Mode").c_str(), &windowMode, windowModes,
-				static_cast<int>(std::size(windowModes))))
-			{
-				m_PlayerSettingsDraft.WindowMode =
-					static_cast<PlayerWindowMode>(windowMode);
-				PersistPlayerSettingsDraft();
-			}
+            constexpr PlayerWindowMode modes[] = {PlayerWindowMode::Borderless,
+                PlayerWindowMode::ExclusiveFullscreen, PlayerWindowMode::MaximizedWindow, PlayerWindowMode::Windowed};
+            const char* labels[] = {"Fullscreen Window", "Exclusive Fullscreen", "Maximized Window", "Windowed"};
+            int selected = static_cast<int>(std::find(std::begin(modes), std::end(modes),
+                m_PlayerSettingsDraft.WindowMode) - std::begin(modes));
+            if (ImGui::Combo(settingRow("Fullscreen Mode").c_str(), &selected, labels, 4))
+            {
+                m_PlayerSettingsDraft.WindowMode = modes[selected];
+                PersistPlayerSettingsDraft();
+            }
+            if (ImGui::Checkbox(settingRow("Default Is Native Resolution").c_str(), &m_PlayerSettingsDraft.DefaultIsNativeResolution))
+                PersistPlayerSettingsDraft();
+            ImGui::BeginDisabled(m_PlayerSettingsDraft.DefaultIsNativeResolution);
+            ImGui::InputScalar(settingRow("Default Screen Width").c_str(), ImGuiDataType_U32, &m_PlayerSettingsDraft.Width);
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                PersistPlayerSettingsDraft();
+            ImGui::InputScalar(settingRow("Default Screen Height").c_str(), ImGuiDataType_U32, &m_PlayerSettingsDraft.Height);
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                PersistPlayerSettingsDraft();
+            ImGui::EndDisabled();
 			if (ImGui::Checkbox(settingRow("Resizable").c_str(), &m_PlayerSettingsDraft.Resizable))
 				PersistPlayerSettingsDraft();
 			if (ImGui::Checkbox(settingRow("VSync").c_str(), &m_PlayerSettingsDraft.VSync))

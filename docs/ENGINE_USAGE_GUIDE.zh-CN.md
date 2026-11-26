@@ -457,3 +457,5 @@ TomCatPlayer --package Game.tcpak --headless --fixed-delta 0.0166667 `
 编辑器的 Build Player 与命令行 `TomCatCLI build` 使用同一导出流程。Windows x64 发行目录根部包含 `<产品名>.exe` 和 `<产品名>_Data/`。数据目录收纳 Game.tcpak、运行时、动态库和着色器。双击根目录的程序即可运行游戏，无需控制台。
 
 在 Project Settings → Player → Icon 中，选择已导入的 Texture2D，或从资源浏览器将 PNG 等纹理拖到该字段。重新导出后，资源管理器中的 EXE 图标与游戏窗口图标均来自该设置。更换图标只需修改项目设置并重新导出。
+
+在 Project Settings → Player → Display 的 Fullscreen Mode 中可选择 Fullscreen Window（无边框全屏）、Exclusive Fullscreen（独占全屏）、Maximized Window（最大化窗口）或 Windowed（普通窗口）。Default Is Native Resolution 使用显示器当前桌面分辨率；取消勾选后，通过 Default Screen Width 和 Default Screen Height 指定启动分辨率。无边框全屏和最大化窗口按比例呈现固定分辨率，窗口大小由屏幕或桌面工作区决定。独占模式由系统选择支持的显示模式，普通窗口可受系统边框、工作区及后续手动调整影响。

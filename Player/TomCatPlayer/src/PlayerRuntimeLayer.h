@@ -35,7 +35,12 @@ namespace TomCat {
 		void OnEvent(Event& event) override;
 
 	private:
-		bool OnWindowResize(WindowResizeEvent& event);
+		void UpdatePresentation(Window& window);
+        Ref<Framebuffer> m_PresentationTarget;
+        uint32_t m_PresentX = 0, m_PresentY = 0, m_PresentWidth = 0, m_PresentHeight = 0;
+        uint32_t m_RenderWidth = 0, m_RenderHeight = 0;
+        bool m_NativeResolution = false;
+        bool OnWindowResize(WindowResizeEvent& event);
 		void Fail(const std::string& message, int exitCode = 5);
 		void WriteRenderDiagnostics();
 		bool WriteScreenshot(std::string& error);

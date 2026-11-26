@@ -88,6 +88,7 @@ private:
 class VulkanFramebuffer final : public Framebuffer {
 public:
     explicit VulkanFramebuffer(const FramebufferSpecification& spec);
+    void PresentToWindow(uint32_t x, uint32_t y, uint32_t width, uint32_t height) override;
     ~VulkanFramebuffer() override;
     void Bind() override;
     void Unbind() override;

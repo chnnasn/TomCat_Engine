@@ -376,6 +376,7 @@ public enum DisplayMode
     Borderless = 1,
     /// <summary>Exclusive fullscreen at the monitor's current video mode.</summary>
     ExclusiveFullscreen = 2,
+    MaximizedWindow = 3,
 }
 
 public static class Log

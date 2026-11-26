@@ -227,6 +227,20 @@ void VulkanFramebuffer::Bind() {
     m_Device->Target = this;
     m_Device->Viewport = {0, 0, float(m_Spec.Width), float(m_Spec.Height), 0, 1};
 }
+void VulkanFramebuffer::PresentToWindow(uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+    auto* target = m_Device->DefaultTarget;
+    target->Bind();
+    target->Clear({0.f, 0.f, 0.f, 1.f});
+    m_Device->Barrier();
+    VkImageBlit rect{};
+    rect.srcSubresource = rect.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    rect.srcOffsets[1] = {int32_t(m_Spec.Width), int32_t(m_Spec.Height), 1};
+    rect.dstOffsets[0] = {int32_t(x), int32_t(y), 0};
+    rect.dstOffsets[1] = {int32_t(x+w), int32_t(y+h), 1};
+    vkCmdBlitImage(m_Device->Commands(), m_Colors.front()->Image, VK_IMAGE_LAYOUT_GENERAL,
+        target->Colors().front()->Image, VK_IMAGE_LAYOUT_GENERAL, 1, &rect, VK_FILTER_NEAREST);
+    m_Device->Barrier();
+}
 void VulkanFramebuffer::Unbind() { m_Device->Target = m_Device->DefaultTarget; }
 void VulkanFramebuffer::BindDepthAttachment(uint32_t slot) const {
     if (!m_Depth || !m_Depth->Sampler) throw std::logic_error("Framebuffer has no sampleable depth attachment");

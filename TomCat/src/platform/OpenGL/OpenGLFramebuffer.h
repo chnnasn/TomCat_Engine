@@ -10,6 +10,7 @@ namespace TomCat {
 
 		void Bind() override;
 		void Unbind() override;
+        void PresentToWindow(uint32_t x, uint32_t y, uint32_t width, uint32_t height) override;
 		void BindDepthAttachment(uint32_t slot) const override;
 		void ClearDepth() override;
 		

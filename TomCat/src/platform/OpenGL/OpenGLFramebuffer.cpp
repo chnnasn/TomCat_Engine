@@ -336,7 +336,19 @@ namespace TomCat {
 		glClearNamedFramebufferfv(m_RendererID, GL_DEPTH, 0, &depth);
 	}
 
-	void OpenGLFramebuffer::Unbind()
+	void OpenGLFramebuffer::PresentToWindow(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+    {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        const GLfloat black[4] = {0, 0, 0, 1};
+        glClearBufferfv(GL_COLOR, 0, black);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_RendererID);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glBlitFramebuffer(0, 0, m_Specification.Width, m_Specification.Height,
+            x, y, x+w, y+h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    }
+
+    void OpenGLFramebuffer::Unbind()
 	{
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	}

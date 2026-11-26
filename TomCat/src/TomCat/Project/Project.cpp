@@ -797,7 +797,10 @@ namespace TomCat {
 						+ std::to_string(kPlayerSettingsSchemaVersion));
 
 				const YAML::Node display = root["display"];
-				RequireExactMapFields(display, "PlayerSettings.Display",
+				if (display["defaultIsNativeResolution"])
+					RequireExactMapFields(display, "PlayerSettings.Display", std::array<const char*, 6>{
+						"width", "height", "windowMode", "resizable", "vSync", "defaultIsNativeResolution" });
+				else RequireExactMapFields(display, "PlayerSettings.Display",
 					std::array<const char*, 5>{ "width", "height", "windowMode",
 						"resizable", "vSync" });
 				const YAML::Node directories = root["directories"];
@@ -814,6 +817,8 @@ namespace TomCat {
 				if (!PlayerWindowModeFromString(
 					display["windowMode"].as<std::string>(), loaded.WindowMode))
 					throw std::runtime_error("PlayerSettings.Display.WindowMode is invalid");
+				loaded.DefaultIsNativeResolution = display["defaultIsNativeResolution"]
+                    ? display["defaultIsNativeResolution"].as<bool>() : loaded.WindowMode == PlayerWindowMode::Borderless;
 				loaded.Resizable = display["resizable"].as<bool>();
 				loaded.VSync = display["vSync"].as<bool>();
 				loaded.SaveDirectory = UTF8ToPath(directories["save"].as<std::string>());
@@ -1091,6 +1096,7 @@ namespace TomCat {
 				<< "  \"display\": {\n"
 				<< "    \"width\": " << normalized.Width << ",\n"
 				<< "    \"height\": " << normalized.Height << ",\n"
+				<< "    \"defaultIsNativeResolution\": " << (normalized.DefaultIsNativeResolution ? "true" : "false") << ",\n"
 				<< "    \"windowMode\": \""
 				<< PlayerWindowModeToString(normalized.WindowMode) << "\",\n"
 				<< "    \"resizable\": " << (normalized.Resizable ? "true" : "false") << ",\n"

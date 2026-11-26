@@ -50,6 +50,7 @@ namespace TomCat {
 			{
 				case PlayerWindowMode::Windowed:
 					return WindowDisplayMode::Windowed;
+				case PlayerWindowMode::MaximizedWindow: return WindowDisplayMode::MaximizedWindow;
 				case PlayerWindowMode::Borderless:
 					return WindowDisplayMode::Borderless;
 				case PlayerWindowMode::ExclusiveFullscreen:
@@ -220,6 +221,7 @@ namespace TomCat {
 				settings.Width, settings.Height, iconPath);
 			plan.ViewportWidth = settings.Width;
 			plan.ViewportHeight = settings.Height;
+			plan.Window.DefaultIsNativeResolution = settings.DefaultIsNativeResolution;
 			plan.Window.DisplayMode = ToWindowDisplayMode(settings.WindowMode);
 			plan.Window.Resizable = settings.Resizable;
 			plan.Window.VSync = settings.VSync;

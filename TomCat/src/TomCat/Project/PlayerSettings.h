@@ -13,7 +13,8 @@ namespace TomCat {
 	{
 		Windowed = 0,
 		Borderless = 1,
-		ExclusiveFullscreen = 2
+		ExclusiveFullscreen = 2,
+		MaximizedWindow = 3
 	};
 
 	struct PlayerSettings
@@ -25,6 +26,7 @@ namespace TomCat {
 		uint32_t Width = 1280;
 		uint32_t Height = 720;
 		PlayerWindowMode WindowMode = PlayerWindowMode::Windowed;
+		bool DefaultIsNativeResolution = false;
 		bool Resizable = true;
 		bool VSync = true;
 		std::filesystem::path SaveDirectory = "Saves";

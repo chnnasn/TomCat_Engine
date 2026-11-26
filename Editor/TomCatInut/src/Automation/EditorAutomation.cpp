@@ -222,7 +222,7 @@ namespace {
         {"project_get_settings", {}},
         {"project_set_settings", {"tags", "layer_names", "collision_masks"}},
         {"player_get_settings", {}},
-        {"player_set_settings", {"product", "company", "version", "icon", "width", "height", "window_mode", "resizable", "vsync", "save_directory", "log_directory", "crash_directory"}},
+        {"player_set_settings", {"product", "company", "version", "icon", "width", "height", "window_mode", "native_resolution", "resizable", "vsync", "save_directory", "log_directory", "crash_directory"}},
         {"prefab_get_overrides", {"entity_id"}}, {"prefab_action", {"entity_id", "action", "target_id", "component_id", "property_id"}},
         {"editor_get_status", {}}, {"scene_get_tree", {"offset", "limit"}}, {"entity_get", {"entity_id"}},
         {"component_get_schema", {}}, {"console_get_entries", {"after", "limit"}},
@@ -744,6 +744,7 @@ std::string EditorLayer::ExecuteAutomation(const std::string& request)
                 if (args["icon"]) settings.Icon = AssetHandle(Id(args, "icon"));
                 if (args["width"]) settings.Width = args["width"].as<uint32_t>();
                 if (args["height"]) settings.Height = args["height"].as<uint32_t>();
+                if (args["native_resolution"]) settings.DefaultIsNativeResolution = args["native_resolution"].as<bool>();
                 if (args["window_mode"]) Require(PlayerWindowModeFromString(Text(args, "window_mode"), settings.WindowMode), "INVALID_ARGUMENT", "Unknown window mode.");
                 if (args["resizable"]) settings.Resizable = args["resizable"].as<bool>();
                 if (args["vsync"]) settings.VSync = args["vsync"].as<bool>();
@@ -754,7 +755,7 @@ std::string EditorLayer::ExecuteAutomation(const std::string& request)
             }
             data = Object({{"product", Quote(settings.ProductName)}, {"company", Quote(settings.CompanyName)},
                 {"version", Quote(settings.Version)}, {"icon", Quote(std::to_string(uint64_t(settings.Icon)))},
-                {"width", Number(settings.Width)}, {"height", Number(settings.Height)}, {"window_mode", Quote(PlayerWindowModeToString(settings.WindowMode))},
+                {"width", Number(settings.Width)}, {"height", Number(settings.Height)}, {"native_resolution", settings.DefaultIsNativeResolution ? "true" : "false"}, {"window_mode", Quote(PlayerWindowModeToString(settings.WindowMode))},
                 {"resizable", settings.Resizable ? "true" : "false"}, {"vsync", settings.VSync ? "true" : "false"},
                 {"save_directory", Quote(PathToUTF8(settings.SaveDirectory))}, {"log_directory", Quote(PathToUTF8(settings.LogDirectory))},
                 {"crash_directory", Quote(PathToUTF8(settings.CrashDirectory))}});

@@ -2076,6 +2076,9 @@
         "version": {
           "type": "string"
         },
+        "native_resolution": {
+          "type": "boolean"
+        },
         "window_mode": {
           "type": "string"
         },

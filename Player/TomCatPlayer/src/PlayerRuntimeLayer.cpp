@@ -221,12 +221,8 @@ namespace TomCat {
 		m_SceneManager = CreateScope<SceneManager>();
 		if (hasWindow)
 		{
-			Window& window = Application::Get().GetWindow();
-			m_SceneManager->SetViewportSize(window.GetFramebufferWidth(),
-				window.GetFramebufferHeight());
-			m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
-				window.GetDPIScale(), { window.GetScreenToFramebufferScaleX(),
-					window.GetScreenToFramebufferScaleY() });
+			m_NativeResolution = assets.GetCookedPlayerSettings().DefaultIsNativeResolution;
+			UpdatePresentation(Application::Get().GetWindow());
 		}
 		else
 		{
@@ -277,13 +273,15 @@ namespace TomCat {
 		const bool hasWindow = Application::Get().HasWindow();
 		if (hasWindow)
 		{
-			Window& window = Application::Get().GetWindow();
-			m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
-				window.GetDPIScale(), { window.GetScreenToFramebufferScaleX(),
-					window.GetScreenToFramebufferScaleY() });
+			UpdatePresentation(Application::Get().GetWindow());
 		}
 		if (const Ref<Scene> scene = m_SceneManager->GetActiveScene())
-			scene->OnUpdateRuntime(timestep, hasWindow);
+			{
+            if (m_PresentationTarget) m_PresentationTarget->Bind();
+            scene->OnUpdateRuntime(timestep, hasWindow);
+            if (m_PresentationTarget)
+                m_PresentationTarget->PresentToWindow(m_PresentX, m_PresentY, m_PresentWidth, m_PresentHeight);
+        }
 		if (!m_RenderDiagnosticsPath.empty() && (m_Frame % 60) == 0)
 			WriteRenderDiagnostics();
 		++m_Frame;
@@ -321,16 +319,50 @@ namespace TomCat {
 			TC_Bind_Event_Fn(PlayerRuntimeLayer::OnWindowResize));
 	}
 
-	bool PlayerRuntimeLayer::OnWindowResize(WindowResizeEvent& event)
+	void PlayerRuntimeLayer::UpdatePresentation(Window& window)
+    {
+        const uint32_t w = window.GetFramebufferWidth(), h = window.GetFramebufferHeight();
+        if (!w || !h) return;
+        const auto mode = window.GetDisplayMode();
+        const bool scale = !m_NativeResolution &&
+            (mode == WindowDisplayMode::Borderless || mode == WindowDisplayMode::MaximizedWindow);
+        const auto rw = scale ? m_ViewportWidth : w, rh = scale ? m_ViewportHeight : h;
+        if (rw != m_RenderWidth || rh != m_RenderHeight)
+        {
+            m_RenderWidth = rw;
+            m_RenderHeight = rh;
+            m_SceneManager->SetViewportSize(rw, rh);
+        }
+        if (rw != w || rh != h)
+        {
+            if (!m_PresentationTarget)
+            {
+                FramebufferSpecification spec;
+                spec.Width = rw; spec.Height = rh;
+                spec.Attachments = {FramebufferTextureFormat::RGBA8, FramebufferTextureFormat::Depth};
+                m_PresentationTarget = Framebuffer::Create(spec);
+            }
+        }
+        else if (m_PresentationTarget)
+        {
+            m_PresentationTarget.reset();
+            RenderCommand::SetViewport(0, 0, w, h);
+        }
+        const double factor = std::min(double(w)/rw, double(h)/rh);
+        m_PresentWidth = std::clamp(uint32_t(std::lround(rw*factor)), 1u, w);
+        m_PresentHeight = std::clamp(uint32_t(std::lround(rh*factor)), 1u, h);
+        m_PresentX = (w-m_PresentWidth)/2;
+        m_PresentY = (h-m_PresentHeight)/2;
+        const float sx = window.GetScreenToFramebufferScaleX(), sy = window.GetScreenToFramebufferScaleY();
+        m_SceneManager->SetRuntimeUIViewportMetrics({m_PresentX/sx, (h-m_PresentHeight-m_PresentY)/sy},
+            window.GetDPIScale(), {sx*rw/m_PresentWidth, sy*rh/m_PresentHeight});
+    }
+
+    bool PlayerRuntimeLayer::OnWindowResize(WindowResizeEvent& event)
 	{
 		if (m_SceneManager)
 		{
-			m_SceneManager->SetViewportSize(event.GetFramebufferWidth(),
-				event.GetFramebufferHeight());
-			m_SceneManager->SetRuntimeUIViewportMetrics(glm::vec2(0.0f),
-				event.GetDPIScale(), {
-					event.GetScreenToFramebufferScaleX(),
-					event.GetScreenToFramebufferScaleY() });
+			UpdatePresentation(Application::Get().GetWindow());
 		}
 		return false;
 	}
@@ -343,9 +375,8 @@ namespace TomCat {
 			error = "no active scene or graphics context";
 			return false;
 		}
-		Window& window = Application::Get().GetWindow();
-		const uint32_t width = window.GetFramebufferWidth();
-		const uint32_t height = window.GetFramebufferHeight();
+		const uint32_t width = m_RenderWidth;
+		const uint32_t height = m_RenderHeight;
 		if (width == 0 || height == 0)
 		{
 			error = "the window framebuffer is empty (minimized?)";

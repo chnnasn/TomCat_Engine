@@ -4304,7 +4304,9 @@ namespace TomCat {
 		for (uint16_t mask : packagePhysicsSettings.CollisionMasks)
 			succeeded = succeeded && WriteLittleEndian<uint16_t>(output, mask);
 		const uint32_t playerFlags = (packagePlayerSettings.Resizable ? 1U : 0U)
-			| (packagePlayerSettings.VSync ? 2U : 0U);
+			| (packagePlayerSettings.VSync ? 2U : 0U)
+			| (packagePlayerSettings.DefaultIsNativeResolution ? 4U :
+				(packagePlayerSettings.WindowMode == PlayerWindowMode::Borderless ? 8U : 0U));
 		succeeded = succeeded
 			&& WriteLittleEndian<uint32_t>(output,
 				RuntimeCompatibility::BootManifestSchemaVersion)
@@ -4590,8 +4592,8 @@ namespace TomCat {
 			}
 			if (bootManifestBytes > RuntimeCompatibility::MaximumBootManifestBytes
 				|| rawWindowMode > static_cast<uint32_t>(
-					PlayerWindowMode::ExclusiveFullscreen)
-				|| (playerFlags & ~3U) != 0)
+					PlayerWindowMode::MaximizedWindow)
+				|| (playerFlags & 12U) == 12U || (playerFlags & ~15U) != 0)
 				return false;
 
 			std::array<std::string*, 6> strings = {
@@ -4622,6 +4624,8 @@ namespace TomCat {
 			mountedPlayerSettings.Icon = AssetHandle(rawIcon);
 			mountedPlayerSettings.WindowMode =
 				static_cast<PlayerWindowMode>(rawWindowMode);
+			mountedPlayerSettings.DefaultIsNativeResolution = (playerFlags & 4U) != 0 ||
+				(mountedPlayerSettings.WindowMode == PlayerWindowMode::Borderless && !(playerFlags & 8U));
 			mountedPlayerSettings.Resizable = (playerFlags & 1U) != 0;
 			mountedPlayerSettings.VSync = (playerFlags & 2U) != 0;
 			mountedPlayerSettings.SaveDirectory = UTF8ToPath(directoryStrings[0]);

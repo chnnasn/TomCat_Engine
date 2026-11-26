@@ -756,7 +756,7 @@ namespace TomCat::Scripting {
 			return Guard([&]()
 			{
 				if (!RequireMainThread()) return Code(ScriptStatus::WrongThread);
-				if (mode < 0 || mode > static_cast<int32_t>(WindowDisplayMode::ExclusiveFullscreen))
+				if (mode < 0 || mode > static_cast<int32_t>(WindowDisplayMode::MaximizedWindow))
 					return Code(ScriptStatus::InvalidArgument);
 				Application& application = Application::Get();
 				if (!application.HasWindow()) return Code(ScriptStatus::Unavailable);

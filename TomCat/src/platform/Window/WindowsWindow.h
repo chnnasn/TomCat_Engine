@@ -53,6 +53,8 @@ namespace TomCat {
 	private:
 		GLFWwindow* m_Window = nullptr;
 		WindowDisplayMode m_DisplayMode = WindowDisplayMode::Windowed;
+		bool m_UseNativeResolution = false;
+		int m_DefaultWidth = 0, m_DefaultHeight = 0;
 		bool m_Resizable = true;
 		// Windowed placement restored when leaving a fullscreen mode.
 		int m_WindowedX = 100, m_WindowedY = 100;

@@ -1,5 +1,6 @@
 #include "tcpch.h"
 #include "PlayerSettings.h"
+#include "TomCat/Renderer/Framebuffer.h"
 
 #include "TomCat/Utils/PathUtils.h"
 
@@ -87,7 +88,8 @@ namespace TomCat {
 		switch (mode)
 		{
 			case PlayerWindowMode::Windowed: return "Windowed";
-			case PlayerWindowMode::Borderless: return "Borderless";
+			case PlayerWindowMode::Borderless: return "FullscreenWindow";
+			case PlayerWindowMode::MaximizedWindow: return "MaximizedWindow";
 			case PlayerWindowMode::ExclusiveFullscreen: return "ExclusiveFullscreen";
 		}
 		return "";
@@ -97,8 +99,10 @@ namespace TomCat {
 	{
 		if (value == "Windowed")
 			mode = PlayerWindowMode::Windowed;
-		else if (value == "Borderless")
+		else if (value == "Borderless" || value == "FullscreenWindow")
 			mode = PlayerWindowMode::Borderless;
+		else if (value == "MaximizedWindow")
+			mode = PlayerWindowMode::MaximizedWindow;
 		else if (value == "ExclusiveFullscreen")
 			mode = PlayerWindowMode::ExclusiveFullscreen;
 		else
@@ -133,10 +137,18 @@ namespace TomCat {
 			errorMessage = "PlayerSettings display size must be between 320x200 and 16384x16384";
 			return false;
 		}
-		switch (settings.WindowMode)
+		if (!settings.DefaultIsNativeResolution &&
+            (settings.WindowMode == PlayerWindowMode::Borderless || settings.WindowMode == PlayerWindowMode::MaximizedWindow) &&
+            (settings.Width > Framebuffer::MaxFramebufferSize || settings.Height > Framebuffer::MaxFramebufferSize))
+        {
+            errorMessage = "Fixed presentation resolution exceeds the maximum framebuffer size";
+            return false;
+        }
+        switch (settings.WindowMode)
 		{
 			case PlayerWindowMode::Windowed:
 			case PlayerWindowMode::Borderless:
+			case PlayerWindowMode::MaximizedWindow:
 			case PlayerWindowMode::ExclusiveFullscreen:
 				break;
 			default:

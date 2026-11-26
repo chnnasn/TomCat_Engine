@@ -14,7 +14,8 @@ namespace TomCat {
 	{
 		Windowed,
 		Borderless,
-		ExclusiveFullscreen
+		ExclusiveFullscreen,
+		MaximizedWindow
 	};
 
 	struct WindowProps
@@ -24,6 +25,7 @@ namespace TomCat {
 		uint32_t Height;
 		std::filesystem::path IconPath;
 		WindowDisplayMode DisplayMode = WindowDisplayMode::Windowed;
+		bool DefaultIsNativeResolution = false;
 		bool Resizable = true;
 		bool VSync = true;
 		bool Visible = true;

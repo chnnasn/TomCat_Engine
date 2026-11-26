@@ -202,17 +202,18 @@ namespace TomCat {
             glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, DesktopOpenGLMinorVersion);
             glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         }
+		glfwWindowHint(GLFW_MAXIMIZED, props.DisplayMode == WindowDisplayMode::MaximizedWindow);
 		glfwWindowHint(GLFW_RESIZABLE,
 			props.DisplayMode == WindowDisplayMode::Borderless
-				? GLFW_FALSE : (props.Resizable ? GLFW_TRUE : GLFW_FALSE));
+				? GLFW_FALSE : (props.Resizable || props.DisplayMode == WindowDisplayMode::MaximizedWindow ? GLFW_TRUE : GLFW_FALSE));
 		glfwWindowHint(GLFW_DECORATED,
 			props.DisplayMode == WindowDisplayMode::Borderless
 				? GLFW_FALSE : GLFW_TRUE);
 
 		const bool fillsMonitor = props.DisplayMode == WindowDisplayMode::Borderless
 			|| props.DisplayMode == WindowDisplayMode::ExclusiveFullscreen;
-		GLFWmonitor* primaryMonitor = fillsMonitor ? glfwGetPrimaryMonitor() : nullptr;
-		if (fillsMonitor && !primaryMonitor)
+		GLFWmonitor* primaryMonitor = (fillsMonitor || props.DefaultIsNativeResolution) ? glfwGetPrimaryMonitor() : nullptr;
+		if ((fillsMonitor || props.DefaultIsNativeResolution) && !primaryMonitor)
 		{
 			if (s_GLFWWindowCount == 0)
 				glfwTerminate();
@@ -224,7 +225,7 @@ namespace TomCat {
 		int windowHeight = static_cast<int>(props.Height);
 		int windowX = 0;
 		int windowY = 0;
-		if (props.DisplayMode == WindowDisplayMode::Borderless)
+		if (props.DisplayMode == WindowDisplayMode::Borderless || props.DefaultIsNativeResolution)
 		{
 			const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
 			if (!videoMode || videoMode->width <= 0 || videoMode->height <= 0)
@@ -292,6 +293,8 @@ namespace TomCat {
 			glfwSetWindowPos(m_Window, windowX, windowY);
 
 		m_DisplayMode = props.DisplayMode;
+		m_UseNativeResolution = props.DefaultIsNativeResolution;
+		m_DefaultWidth = props.Width; m_DefaultHeight = props.Height;
 		m_Resizable = props.Resizable;
 		m_WindowedWidth = static_cast<int>(props.Width);
 		m_WindowedHeight = static_cast<int>(props.Height);
@@ -681,21 +684,26 @@ namespace TomCat {
 			return false;
 		if (mode == m_DisplayMode)
 			return true;
-		if (m_DisplayMode == WindowDisplayMode::Windowed)
+		if (m_DisplayMode == WindowDisplayMode::MaximizedWindow) glfwRestoreWindow(m_Window);
+		if (m_DisplayMode == WindowDisplayMode::Windowed && !glfwGetWindowAttrib(m_Window, GLFW_MAXIMIZED))
 		{
 			glfwGetWindowPos(m_Window, &m_WindowedX, &m_WindowedY);
 			glfwGetWindowSize(m_Window, &m_WindowedWidth, &m_WindowedHeight);
 		}
 		GLFWmonitor* target = MonitorForWindow(m_Window);
-		const GLFWvidmode* video = target ? glfwGetVideoMode(target) : nullptr;
+        // Leaving exclusive restores the desktop mode. Query its dimensions afterwards.
+        if (m_DisplayMode == WindowDisplayMode::ExclusiveFullscreen && mode == WindowDisplayMode::Borderless)
+            glfwSetWindowMonitor(m_Window, nullptr, m_WindowedX, m_WindowedY,
+                m_WindowedWidth, m_WindowedHeight, GLFW_DONT_CARE);
+        const GLFWvidmode* video = target ? glfwGetVideoMode(target) : nullptr;
 		if (mode != WindowDisplayMode::Windowed && !video)
 			return false;
 
 		switch (mode)
 		{
 			case WindowDisplayMode::ExclusiveFullscreen:
-				glfwSetWindowMonitor(m_Window, target, 0, 0, video->width,
-					video->height, video->refreshRate);
+				glfwSetWindowMonitor(m_Window, target, 0, 0, m_UseNativeResolution ? video->width : m_DefaultWidth,
+					m_UseNativeResolution ? video->height : m_DefaultHeight, video->refreshRate);
 				break;
 			case WindowDisplayMode::Borderless:
 			{
@@ -709,13 +717,15 @@ namespace TomCat {
 				glfwSetWindowSize(m_Window, video->width, video->height);
 				break;
 			}
+			case WindowDisplayMode::MaximizedWindow:
 			case WindowDisplayMode::Windowed:
 				glfwSetWindowMonitor(m_Window, nullptr, m_WindowedX, m_WindowedY,
 					std::max(1, m_WindowedWidth), std::max(1, m_WindowedHeight),
 					GLFW_DONT_CARE);
 				glfwSetWindowAttrib(m_Window, GLFW_DECORATED, GLFW_TRUE);
 				glfwSetWindowAttrib(m_Window, GLFW_RESIZABLE,
-					m_Resizable ? GLFW_TRUE : GLFW_FALSE);
+					m_Resizable || mode == WindowDisplayMode::MaximizedWindow ? GLFW_TRUE : GLFW_FALSE);
+				if (mode == WindowDisplayMode::MaximizedWindow) glfwMaximizeWindow(m_Window);
 				break;
 		}
 		m_DisplayMode = mode;
