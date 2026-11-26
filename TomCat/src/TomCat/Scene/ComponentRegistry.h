@@ -86,6 +86,7 @@ namespace TomCat {
 			inline constexpr uint64_t Enabled = 100;
 			inline constexpr uint64_t BodyType = 101;
 			inline constexpr uint64_t FixedRotation = 102;
+			inline constexpr uint64_t GravityScale = 103;
 		}
 		namespace SpriteRendererProperties {
 			inline constexpr uint64_t Enabled = 200;
@@ -230,6 +231,7 @@ namespace TomCat {
 			inline constexpr uint64_t MaskProgress = 1612;
 			inline constexpr uint64_t MaskColor = 1613;
 			inline constexpr uint64_t MaskSprite = 1614;
+			inline constexpr uint64_t RotatingIris = 1615;
 		}
 		namespace ParticleSystem2DProperties {
 			inline constexpr uint64_t Enabled = 1100;

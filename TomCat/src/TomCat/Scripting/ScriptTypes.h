@@ -763,6 +763,7 @@ namespace TomCat::Scripting {
 		inline constexpr uint32_t RigidbodyEnabled = 100;
 		inline constexpr uint32_t RigidbodyBodyType = 101;
 		inline constexpr uint32_t RigidbodyFixedRotation = 102;
+		inline constexpr uint32_t RigidbodyGravityScale = 103;
 		inline constexpr uint32_t SpriteEnabled = 200;
 		inline constexpr uint32_t SpriteColor = 201;
 		inline constexpr uint32_t SpriteAsset = 202;

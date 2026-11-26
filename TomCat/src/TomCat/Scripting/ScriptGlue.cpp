@@ -2442,6 +2442,7 @@ namespace TomCat::Scripting {
 						const auto& value = entity.GetComponent<Rigidbody2D>();
 						if (propertyId == RigidbodyEnabled) *output = GameplayBool(value.Enabled);
 						else if (propertyId == RigidbodyBodyType) *output = GameplayInt32(static_cast<int32_t>(value.Type));
+						else if (propertyId == RigidbodyGravityScale) *output = GameplayFloat(value.GravityScale);
 						else if (propertyId == RigidbodyFixedRotation) *output = GameplayBool(value.FixedRotation);
 						else return Code(ScriptStatus::InvalidArgument);
 						return 0;
@@ -2567,6 +2568,7 @@ namespace TomCat::Scripting {
 						&& GameplayReadVector3(input, vector3);
 				case NativeComponentType::Rigidbody2D:
 					return (propertyId == RigidbodyEnabled && GameplayReadBool(input, boolean))
+						|| (propertyId == RigidbodyGravityScale && GameplayReadFloat(input, number))
 						|| (propertyId == RigidbodyFixedRotation && GameplayReadBool(input, boolean))
 						|| (propertyId == RigidbodyBodyType && GameplayReadInt32(input, integer)
 							&& integer >= 0 && integer <= 2);
@@ -2743,6 +2745,7 @@ namespace TomCat::Scripting {
 						if (!entity.HasComponent<Rigidbody2D>()) return Code(ScriptStatus::NotFound);
 						auto& value = entity.GetComponent<Rigidbody2D>();
 						if (propertyId == RigidbodyEnabled && GameplayReadBool(input, boolean)) value.Enabled = boolean;
+						else if (propertyId == RigidbodyGravityScale && GameplayReadFloat(input, number)) value.GravityScale = number;
 						else if (propertyId == RigidbodyFixedRotation && GameplayReadBool(input, boolean)) value.FixedRotation = boolean;
 						else if (propertyId == RigidbodyBodyType && GameplayReadInt32(input, integer)
 							&& integer >= 0 && integer <= 2) value.Type = static_cast<Rigidbody2D::BodyType>(integer);

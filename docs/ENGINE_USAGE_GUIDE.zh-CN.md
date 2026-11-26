@@ -449,3 +449,5 @@ TomCatPlayer --package Game.tcpak --headless --fixed-delta 0.0166667 `
 - mp3/ogg 都是整段解码，不支持流式播放。
 - 本文档若与 `TomCat/src/TomCat` 实现冲突，以实现为准（该仓库
   `docs/README.md` 为索引）。
+
+刚体属性 `Rigidbody2D.GravityScale` 默认为 1，设为 0 可由角色脚本独立积分重力。后处理组件启用 `RotatingIris` 时，MaskProgress 从 0 到 1 将遮罩中心开口旋转一周并收拢。

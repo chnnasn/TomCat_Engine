@@ -38,7 +38,7 @@ namespace TomCat {
         // Iris transition: pixels whose mask alpha is below progress are
         // covered with coverColor. A null mask covers the whole target.
         virtual void ApplyMaskTransition(const Ref<Texture2D>& mask, float progress,
-            const glm::vec4& coverColor) = 0;
+            const glm::vec4& coverColor, bool rotatingIris = false) = 0;
         virtual void ReleaseColorGrade() = 0;
 
 		virtual void SetViewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) = 0;

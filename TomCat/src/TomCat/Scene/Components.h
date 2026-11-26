@@ -554,6 +554,7 @@ namespace TomCat {
 		// 1 covers every pixel with MaskColor; the mask texture selects which
 		// pixels survive at a given progress (mask alpha compared against it).
 		bool MaskEnabled = false;
+		bool RotatingIris = false;
 		float MaskProgress = 0.0f;
 		glm::vec4 MaskColor{ 0.0f, 0.0f, 0.0f, 1.0f };
 		AssetHandle MaskSprite = AssetHandle(0);
@@ -853,6 +854,7 @@ namespace TomCat {
 		enum class BodyType { Static = 0, Dynamic, Kinematic };
 		BodyType Type = BodyType::Static;
 		bool FixedRotation = false;
+		float GravityScale = 1.0f;
 
 		// Storage for runtime
 		void* RuntimeBody = nullptr;

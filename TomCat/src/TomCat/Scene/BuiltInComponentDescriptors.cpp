@@ -926,7 +926,7 @@ namespace TomCat {
 				if (!legacy)
 					return true;
 				if (!ValidateLegacyMap(legacy, "Rigidbody2D",
-					{ "Enabled", "BodyType", "FixedRotation" }, {}, error))
+					{ "Enabled", "BodyType", "FixedRotation" }, { "GravityScale" }, error))
 					return false;
 				const std::string type = legacy["BodyType"].as<std::string>();
 				int32_t typeValue = -1;
@@ -942,6 +942,7 @@ namespace TomCat {
 				canonical["Enabled"] = legacy["Enabled"];
 				canonical["BodyType"] = typeValue;
 				canonical["FixedRotation"] = legacy["FixedRotation"];
+				if (legacy["GravityScale"]) canonical["GravityScale"] = legacy["GravityScale"];
 				return ApplyLegacyPropertyMap(descriptor, entity, canonical, error);
 			};
 		}
@@ -1905,6 +1906,7 @@ namespace TomCat {
 		{
 			auto descriptor = BaseDescriptor<Rigidbody2D>(ComponentIds::Rigidbody2D,
 				"TomCat.Rigidbody2D", "Rigidbody 2D");
+			descriptor.SchemaVersion = 2;
 			descriptor.ScriptAccessible = true;
 			descriptor.EncodeLegacyFields = LegacyRigidbody2D();
 			descriptor.DecodeLegacyFields = LegacyRigidbody2DDecode();
@@ -1922,8 +1924,11 @@ namespace TomCat {
 						return true;
 					}),
 				BoolProperty<Rigidbody2D>(ComponentIds::Rigidbody2DProperties::FixedRotation,
-					"FixedRotation", &Rigidbody2D::FixedRotation)
+					"FixedRotation", &Rigidbody2D::FixedRotation),
+				FloatProperty<Rigidbody2D>(ComponentIds::Rigidbody2DProperties::GravityScale,
+					"GravityScale", &Rigidbody2D::GravityScale)
 			};
+			SetPropertyDefault(descriptor, ComponentIds::Rigidbody2DProperties::GravityScale, 1.0f);
 			SetPropertyDefault(descriptor, ComponentIds::Rigidbody2DProperties::BodyType,
 				static_cast<int32_t>(Rigidbody2D{}.Type));
 			return descriptor;
@@ -2359,6 +2364,7 @@ namespace TomCat {
 			auto descriptor = BaseDescriptor<PostProcess2D>(
 				ComponentIds::PostProcess2D, "TomCat.PostProcess2D",
 				"Post Process 2D");
+			descriptor.SchemaVersion = 2;
 			descriptor.UseGenericInspector = true;
 			// Script-accessible so level scripts can switch the palette colors
 			// and drive mask progress through the generated managed proxy.
@@ -2409,7 +2415,9 @@ namespace TomCat {
 				ColorProperty<PostProcess2D>(
 					ComponentIds::PostProcess2DProperties::MaskColor,
 					"MaskColor", &PostProcess2D::MaskColor),
-				std::move(maskSprite)
+				std::move(maskSprite),
+				BoolProperty<PostProcess2D>(ComponentIds::PostProcess2DProperties::RotatingIris,
+					"RotatingIris", &PostProcess2D::RotatingIris)
 			};
 			return descriptor;
 		}

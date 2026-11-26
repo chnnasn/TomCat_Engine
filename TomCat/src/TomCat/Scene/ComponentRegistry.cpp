@@ -269,6 +269,28 @@ namespace TomCat {
 			try
 			{
                 const uint32_t version = source["SchemaVersion"].as<uint32_t>();
+                if (version == 1 && descriptor.SchemaVersion == 2 &&
+                    (static_cast<uint64_t>(descriptor.TypeId) == ComponentIds::Rigidbody2D || static_cast<uint64_t>(descriptor.TypeId) == ComponentIds::PostProcess2D))
+                {
+                    prepared = YAML::Clone(source);
+                    YAML::Node added;
+                    if (static_cast<uint64_t>(descriptor.TypeId) == ComponentIds::Rigidbody2D)
+                    {
+                        added["PropertyId"] = ComponentIds::Rigidbody2DProperties::GravityScale;
+                        added["StableName"] = "GravityScale";
+                        added["Value"] = 1.0f;
+                    }
+                    else
+                    {
+                        added["PropertyId"] = ComponentIds::PostProcess2DProperties::RotatingIris;
+                        added["StableName"] = "RotatingIris";
+                        added["Value"] = false;
+                    }
+                    prepared["Properties"].push_back(added);
+                    prepared["SchemaVersion"] = 2;
+                    compatible = true;
+                    return true;
+                }
                 if (version != descriptor.SchemaVersion)
                 {
                     error = descriptor.StableName + " SchemaVersion must be "

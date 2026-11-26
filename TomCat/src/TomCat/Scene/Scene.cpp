@@ -2800,6 +2800,7 @@ namespace TomCat {
 				const auto& rigidbody = m_Registry.get<Rigidbody2D>(entity);
 				HashPhysicsValue(hash, rigidbody.Enabled);
 				HashPhysicsValue(hash, static_cast<uint64_t>(rigidbody.Type));
+				HashPhysicsFloat(hash, rigidbody.GravityScale);
 				HashPhysicsValue(hash, rigidbody.FixedRotation);
 			}
 
@@ -2887,6 +2888,7 @@ namespace TomCat {
 		{
 			const auto& rigidbody = m_Registry.get<Rigidbody2D>(handle);
 			HashPhysicsValue(hash, static_cast<uint64_t>(rigidbody.Type));
+			HashPhysicsFloat(hash, rigidbody.GravityScale);
 			HashPhysicsValue(hash, rigidbody.FixedRotation);
 		}
 		return hash;
@@ -3122,6 +3124,7 @@ namespace TomCat {
 					const auto& rigidbody = m_Registry.get<Rigidbody2D>(endpoint);
 					HashPhysicsValue(hash,
 						static_cast<uint64_t>(rigidbody.Type));
+					HashPhysicsFloat(hash, rigidbody.GravityScale);
 					HashPhysicsValue(hash, rigidbody.FixedRotation);
 				}
 			};
@@ -3290,6 +3293,7 @@ namespace TomCat {
 			{
 				const auto& rigidbody = entity.GetComponent<Rigidbody2D>();
 				bodyDef.type = Rigidbody2DTypeToBox2DBody(rigidbody.Type);
+				bodyDef.gravityScale = rigidbody.GravityScale;
 				bodyDef.fixedRotation = rigidbody.FixedRotation;
 			}
 			else
@@ -3791,6 +3795,7 @@ namespace TomCat {
 			{
 				b2BodyDef bodyDef;
 				bodyDef.type = desiredType;
+				bodyDef.gravityScale = explicitRigidbody ? entity.GetComponent<Rigidbody2D>().GravityScale : 1.f;
 				bodyDef.fixedRotation = fixedRotation;
 				bodyDef.position.Set(transform._Translation.x, transform._Translation.y);
 				bodyDef.angle = transform._Rotation.z;
@@ -3822,6 +3827,7 @@ namespace TomCat {
 				const float angularVelocity = body->GetAngularVelocity();
 				const bool awake = body->IsAwake();
 				body->SetType(desiredType);
+				body->SetGravityScale(explicitRigidbody ? entity.GetComponent<Rigidbody2D>().GravityScale : 1.f);
 				body->SetFixedRotation(fixedRotation);
 				body->SetTransform(
 					{ transform._Translation.x, transform._Translation.y },
@@ -4692,9 +4698,12 @@ namespace TomCat {
 			else
 				Renderer2D::BeginScene(camera._Camera, cameraTransform);
 			Renderer2D::SetPixelSnap(pixelFrame.Valid ? pixelFrame.WorldUnitsPerPixel : 0.0f);
+			// Allow later sorted sprites and text to paint over coplanar fragments.
+			RenderCommand::SetDepthLessEqual(true);
 			Render2DComponents(*this, m_Registry, viewProjection,
 				RuntimeUIVisibilityMode::Gameplay);
 			Renderer2D::EndScene();
+			RenderCommand::SetDepthLessEqual(false);
 			Renderer2D::SetPixelSnap(0.0f);
 			if (pixelFrame.Valid)
 				DrawPixelPerfectLetterbox(pixelFrame,
@@ -4735,7 +4744,7 @@ namespace TomCat {
 						// A missing mask asset skips the pass; a resolved one
 						// with zero progress early-outs inside the API.
 						RenderCommand::ApplyMaskTransition(mask,
-							postProcess.MaskProgress, postProcess.MaskColor);
+							postProcess.MaskProgress, postProcess.MaskColor, postProcess.RotatingIris);
 					}
 				}
 			}
@@ -4803,10 +4812,13 @@ namespace TomCat {
 		Renderer3D::EndScene();
 		Renderer2D::BeginScene(view);
 
+		// Allow later sorted sprites and text to paint over coplanar fragments.
+		RenderCommand::SetDepthLessEqual(true);
 		Render2DComponents(*this, m_Registry, view.ViewProjection,
 			RuntimeUIVisibilityMode::Editor);
 
 		Renderer2D::EndScene();
+		RenderCommand::SetDepthLessEqual(false);
 		RuntimeUISystem::RenderEditorCanvas(*this, m_Registry,
 			view.ViewProjection,
 			RuntimeUIVisibilityMode::Editor);

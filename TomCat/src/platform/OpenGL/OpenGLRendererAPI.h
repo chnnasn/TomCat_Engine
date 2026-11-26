@@ -13,7 +13,7 @@ namespace TomCat{
         void ApplyPaletteSwap(const glm::vec4 (&oldColors)[4],
             const glm::vec4 (&newColors)[4], float threshold) override;
         void ApplyMaskTransition(const Ref<Texture2D>& mask, float progress,
-            const glm::vec4& coverColor) override;
+            const glm::vec4& coverColor, bool rotatingIris = false) override;
         void ReleaseColorGrade() override;
 
 		virtual void SetViewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) override;

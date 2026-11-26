@@ -371,7 +371,7 @@ void main(){
     }
 
     void OpenGLRendererAPI::ApplyMaskTransition(const Ref<Texture2D>& mask,
-        float progress, const glm::vec4& coverColor) {
+        float progress, const glm::vec4& coverColor, bool rotatingIris) {
         if (!mask || !mask->IsLoaded()) return;
         if (!std::isfinite(progress) || !std::isfinite(coverColor.x)
             || !std::isfinite(coverColor.y) || !std::isfinite(coverColor.z)
@@ -400,6 +400,15 @@ void main(){
     vec4 source=texture(u_Source,v_UV);
     float masked=texture(u_Mask,v_UV).a;
     float cover=u_Parameters.x<=0.0 ? 0.0 : step(masked,u_Parameters.x);
+    float progress = u_Parameters.x;
+    if (u_Parameters.y > 0.5) {
+        vec2 size = vec2(textureSize(u_Source, 0));
+        vec2 p = (v_UV - 0.5) * vec2(size.x / size.y, 1.0);
+        float angle = progress * 6.2831853;
+        float c = cos(angle), s = sin(angle);
+        vec2 uv = mat2(c,-s,s,c) * p / max(0.0001,2.0*(1.0-progress)) + 0.5;
+        cover = progress >= 1.0 || any(lessThan(uv,vec2(0))) || any(greaterThan(uv,vec2(1))) ? 1.0 : 1.0-texture(u_Mask,uv).a;
+    }
     o_Color=mix(source,u_Cover,cover);
 }
 )");
@@ -426,7 +435,7 @@ void main(){
         mask->Bind(1);
         m_MaskShader->Bind();
         const std::array<glm::vec4,2> maskPayload={
-            glm::vec4(clampedProgress,0.0f,0.0f,0.0f), coverColor};
+            glm::vec4(clampedProgress,rotatingIris ? 1.f : 0.f,0.0f,0.0f), coverColor};
         m_MaskUniform->SetData(maskPayload.data(),
             maskPayload.size()*sizeof(glm::vec4));
         glBindVertexArray(m_GradeVAO);glDrawArrays(GL_TRIANGLES,0,3);

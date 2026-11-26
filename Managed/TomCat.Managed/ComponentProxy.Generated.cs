@@ -455,6 +455,13 @@ public sealed partial class Rigidbody2D : IEntityComponent
         set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
             0x0000000000000066UL, value);
     }
+
+    public float GravityScale
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000067UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x0000000000000067UL, value);
+    }
 }
 
 [RegisteredComponent(0x9f0000000000000dUL)]

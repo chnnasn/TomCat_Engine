@@ -15,9 +15,9 @@ namespace TomCat {
 			s_RendererAPI->ApplyPaletteSwap(oldColors, newColors, threshold);
 		}
 		static void ApplyMaskTransition(const Ref<Texture2D>& mask, float progress,
-			const glm::vec4& coverColor)
+			const glm::vec4& coverColor, bool rotatingIris = false)
 		{
-			s_RendererAPI->ApplyMaskTransition(mask, progress, coverColor);
+			s_RendererAPI->ApplyMaskTransition(mask, progress, coverColor, rotatingIris);
 		}
         static void ReleaseColorGrade() { s_RendererAPI->ReleaseColorGrade(); }
 

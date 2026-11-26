@@ -226,7 +226,8 @@
       "properties": [
         { "name": "Enabled", "propertyId": "100", "kind": "Bool" },
         { "name": "BodyType", "propertyId": "101", "kind": "Int32", "conversion": "Enum", "managedType": "RigidbodyBodyType" },
-        { "name": "FixedRotation", "propertyId": "102", "kind": "Bool" }
+        { "name": "FixedRotation", "propertyId": "102", "kind": "Bool" },
+        { "name": "GravityScale", "propertyId": "103", "kind": "Float" }
       ]
     },
     {

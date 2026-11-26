@@ -243,7 +243,7 @@ void main(){
         m_PaletteShader->Draw(m_GradeArray, 3, true, true);
     }
     void ApplyMaskTransition(const Ref<Texture2D>& mask, float progress,
-        const glm::vec4& coverColor) override {
+        const glm::vec4& coverColor, bool rotatingIris = false) override {
         if (!std::isfinite(progress) || !std::isfinite(coverColor.x)
             || !std::isfinite(coverColor.y) || !std::isfinite(coverColor.z)
             || !std::isfinite(coverColor.w))
@@ -261,11 +261,21 @@ layout(location=0) out vec4 o_Color;
 layout(binding=0) uniform sampler2D u_Source;
 layout(binding=1) uniform sampler2D u_Mask;
 uniform float u_Progress;
+uniform float u_RotatingIris;
 uniform vec4 u_Cover;
 void main(){
     vec4 source=texture(u_Source,v_UV);
     float masked=texture(u_Mask,v_UV).a;
     float cover=u_Progress<=0.0 ? 0.0 : step(masked,u_Progress);
+    float progress = u_Progress;
+    if (u_RotatingIris > 0.5) {
+        vec2 size = vec2(textureSize(u_Source, 0));
+        vec2 p = (v_UV - 0.5) * vec2(size.x / size.y, 1.0);
+        float angle = progress * 6.2831853;
+        float c = cos(angle), s = sin(angle);
+        vec2 uv = mat2(c,-s,s,c) * p / max(0.0001,2.0*(1.0-progress)) + 0.5;
+        cover = progress >= 1.0 || any(lessThan(uv,vec2(0))) || any(greaterThan(uv,vec2(1))) ? 1.0 : 1.0-texture(u_Mask,uv).a;
+    }
     o_Color=mix(source,u_Cover,cover);
 }
 )", pass))
@@ -294,6 +304,7 @@ void main(){
         m_MaskTexture->Bind(0);
         mask->Bind(1);
         m_Device->Keep(maskTexture->NativeImage());
+        m_MaskShader->SetFloat("u_RotatingIris", rotatingIris ? 1.f : 0.f);
         m_MaskShader->SetFloat("u_Progress", clampedProgress);
         m_MaskShader->SetFloat4("u_Cover", coverColor);
         m_MaskShader->Draw(m_GradeArray, 3, true, true);
