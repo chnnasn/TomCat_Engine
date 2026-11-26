@@ -130,6 +130,11 @@ namespace TomCat {
         } Lighting;
         Ref<UniformBuffer> LightingBuffer;
         Ref<Texture2D> SpriteNormal;
+        // True only when the current frame actually authors lighting
+        // (non-default ambient, point lights or shadow edges). Lit
+        // sprites are short-circuited to unlit otherwise so batches
+        // never depend on stale uniform-buffer state.
+        bool SceneLightingActive = false;
 
 		Renderer2D::Statistics Stats;
 
@@ -623,6 +628,13 @@ void main()
             data.Falloff[count] = glm::vec4(std::max(light.Falloff, .0001f), 0,0,0); ++count;
         }
         data.AmbientCount.w = static_cast<float>(count);
+        // Lighting only matters when something actually contributes:
+        // a non-default ambient, at least one valid point light, or
+        // shadow-casting edges. Otherwise lit sprites multiply by
+        // ambient white, so skip the lighting path entirely.
+        s_Data.SceneLightingActive = count > 0
+            || !edges.empty()
+            || s_Data.AmbientLight != glm::vec3(1.0f);
         data.EdgeCount.x = static_cast<int>(std::min<size_t>(64, edges.size()));
         for (int i=0; i<data.EdgeCount.x; ++i) { data.Edges[i] = glm::vec4(edges[i].A, edges[i].B); data.EdgeOwners[i].x=edges[i].EntityID; }
         if (s_Data.LightingBuffer) s_Data.LightingBuffer->SetData(&data, sizeof(data));
@@ -779,7 +791,8 @@ void main()
 				transform * s_Data.QuadVertexPositions[i]);
 			s_Data.QuadVertexBufferPtr->Position = worldPosition;
 			s_Data.QuadVertexBufferPtr->Color = color;
-            s_Data.QuadVertexBufferPtr->Lit = lit ? 1.f : 0.f;
+            s_Data.QuadVertexBufferPtr->Lit =
+                (lit && s_Data.SceneLightingActive) ? 1.f : 0.f;
             s_Data.QuadVertexBufferPtr->NormalIndex = NormalTextureIndex(lit);
             s_Data.QuadVertexBufferPtr->NormalBasis = NormalBasis(transform);
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
@@ -846,7 +859,8 @@ void main()
 				transform * s_Data.QuadVertexPositions[i]);
 			s_Data.QuadVertexBufferPtr->Position = worldPosition;
 			s_Data.QuadVertexBufferPtr->Color = tintColor;
-            s_Data.QuadVertexBufferPtr->Lit = lit ? 1.f : 0.f;
+            s_Data.QuadVertexBufferPtr->Lit =
+                (lit && s_Data.SceneLightingActive) ? 1.f : 0.f;
             s_Data.QuadVertexBufferPtr->NormalIndex = NormalTextureIndex(lit);
             s_Data.QuadVertexBufferPtr->NormalBasis = NormalBasis(transform);
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoords[i];
@@ -915,7 +929,8 @@ void main()
 			const glm::vec3 worldPosition = positions[index];
 			s_Data.QuadVertexBufferPtr->Position = worldPosition;
 			s_Data.QuadVertexBufferPtr->Color = tintColor;
-            s_Data.QuadVertexBufferPtr->Lit = lit ? 1.f : 0.f;
+            s_Data.QuadVertexBufferPtr->Lit =
+                (lit && s_Data.SceneLightingActive) ? 1.f : 0.f;
             s_Data.QuadVertexBufferPtr->NormalIndex = NormalTextureIndex(lit);
             s_Data.QuadVertexBufferPtr->NormalBasis = NormalBasis(glm::mat4(glm::vec4(positions[1] - positions[0], 0), glm::vec4(positions[3] - positions[0], 0), glm::vec4(0,0,1,0), glm::vec4(0,0,0,1)));
 			s_Data.QuadVertexBufferPtr->TexCoord = textureCoordinates[index];
