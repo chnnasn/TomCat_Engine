@@ -1450,8 +1450,12 @@ namespace TomCat {
 		enttMap.reserve(other->m_EntityOrder.size());
 		newScene->m_EntityMap.reserve(other->m_EntityOrder.size());
 		newScene->m_EntityOrder.reserve(other->m_EntityOrder.size());
-		EntityNameIndex copiedNames;
-		copiedNames.Reserve(other->m_EntityOrder.size());
+		// Names only need to be unique among siblings (Godot/Unity semantics).
+		// Scene-wide renaming broke imported scenes where the same child name
+		// under different parents is idiomatic ("Sprite" under every device),
+		// so gameplay code locating its own child by name missed after a load.
+		std::unordered_map<uint64_t, EntityNameIndex> namesByParent;
+		namesByParent.reserve(16);
 
 		// Create entities in their original creation order so the hierarchy keeps
 		// newly created items at the bottom after a scene copy.
@@ -1462,8 +1466,11 @@ namespace TomCat {
 				continue;
 			// Resolve names with the same rules as authoring creation, including
 			// raw duplicate/empty Tags, without rescanning all earlier identities.
-			const std::string name = copiedNames.MakeUnique(sourceEntity.GetName());
-			copiedNames.Add(name);
+			const Entity parentEntity = other->GetParent(sourceEntity);
+			const uint64_t parentKey = parentEntity ? static_cast<uint64_t>(parentEntity.GetUUID()) : 0ULL;
+			EntityNameIndex& siblingNames = namesByParent[parentKey];
+			const std::string name = siblingNames.MakeUnique(sourceEntity.GetName());
+			siblingNames.Add(name);
 			Entity newEntity = newScene->CreateEntityIdentity(uuid, name);
 			enttMap[uuid] = (entt::entity)newEntity;
 		}
