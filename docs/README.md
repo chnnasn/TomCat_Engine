@@ -10,6 +10,7 @@
 | 当前交付、分支边界与验收汇总 | [项目状态](PROJECT_STATUS.zh-CN.md) | — |
 | 功能演进、提交映射与历史归档 | [Git 主线记录](PROJECT_HISTORY.zh-CN.md) | — |
 | 项目配置、资产、场景、格式与发布 | [项目系统](../PROJECT_SYSTEM.md) | — |
+| 引擎使用全流程：资产/场景/C#/Tilemap/后处理/打包/排障/Godot 移植 | [引擎使用指南](ENGINE_USAGE_GUIDE.zh-CN.md) | — |
 | C# 脚本、原生 ABI 与生命周期 | [托管脚本](../Managed/README.zh-CN.md) | [Managed scripting](../Managed/README.md) |
 | NuGet 还原、项目引用与托管依赖加载 | [C# 项目依赖](CSHARP_DEPENDENCIES.md) | — |
 | 无界面 Cook 与 Player 构建 | [TomCatCLI](../Tools/TomCatCLI/README.zh-CN.md) | [TomCatCLI](../Tools/TomCatCLI/README.md) |
