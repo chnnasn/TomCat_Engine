@@ -78,6 +78,15 @@ foreach ($component in $manifest.components) {
                 } else {
                     ''
                 }
+            # Optional one-paragraph XML doc for the generated property.
+            $summary = if ($property.PSObject.Properties.Name -contains 'summary') {
+                [string]$property.summary
+            } else {
+                ''
+            }
+            if ($summary -match '[<>&\r\n]') {
+                throw "Component '$managedType' property '$propertyName' summary must be plain single-line text."
+            }
             if ($propertyName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
                 throw "Component '$managedType' has invalid property name '$propertyName'."
             }
@@ -111,6 +120,7 @@ foreach ($component in $manifest.components) {
                 Kind = $kind
                 Conversion = $conversion
                 ManagedType = $propertyManagedType
+                Summary = $summary
             }
         }
     }
@@ -225,6 +235,9 @@ foreach ($entry in $entries | Where-Object GenerateProxy) {
             $setterValue = 'value.Handle'
         }
         $lines.Add('')
+        if (-not [string]::IsNullOrWhiteSpace($property.Summary)) {
+            $lines.Add("    /// <summary>$($property.Summary)</summary>")
+        }
         $lines.Add("    public $managedType $($property.Name)")
         $lines.Add('    {')
         $lines.Add("        get => $getter;")

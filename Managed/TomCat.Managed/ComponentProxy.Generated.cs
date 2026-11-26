@@ -135,6 +135,7 @@ public sealed partial class Camera : IEntityComponent
             0x000000000000012fUL, (int)value);
     }
 
+    /// <summary>Full visible height in world units (top minus bottom). The view spans OrthographicSize / 2 above and below the camera; this differs from Unity and Godot, which use half height. See OrthographicHalfHeight.</summary>
     public float OrthographicSize
     {
         get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000130UL);

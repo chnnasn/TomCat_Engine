@@ -148,7 +148,7 @@
         { "name": "FixedAspectRatio", "propertyId": "301", "kind": "Bool" },
         { "name": "BackgroundColor", "propertyId": "302", "kind": "Color" },
         { "name": "ProjectionType", "propertyId": "303", "kind": "Int32", "conversion": "Enum", "managedType": "CameraProjectionType" },
-        { "name": "OrthographicSize", "propertyId": "304", "kind": "Float" },
+        { "name": "OrthographicSize", "propertyId": "304", "kind": "Float", "summary": "Full visible height in world units (top minus bottom). The view spans OrthographicSize / 2 above and below the camera; this differs from Unity and Godot, which use half height. See OrthographicHalfHeight." },
         { "name": "OrthographicNearClip", "propertyId": "305", "kind": "Float" },
         { "name": "OrthographicFarClip", "propertyId": "306", "kind": "Float" },
         { "name": "PerspectiveVerticalFov", "propertyId": "307", "kind": "Float" },
