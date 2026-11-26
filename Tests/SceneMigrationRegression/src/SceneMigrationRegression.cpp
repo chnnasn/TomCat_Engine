@@ -1,5 +1,7 @@
 #include <TomCat/Core/Log.h>
 #include <TomCat/Scene/Entity.h>
+#include <TomCat/Scene/Components.h>
+#include <TomCat/Scene/ComponentRegistry.h>
 #include <TomCat/Scene/SceneSerializer.h>
 #include <yaml-cpp/yaml.h>
 #include <iostream>
@@ -31,7 +33,31 @@ int main()
             if (!target->FindEntityByUUID(expected ? id : sentinel))
                 throw std::runtime_error("decode violated scene transaction semantics");
         }
-        std::cout << "PASS current scene roundtrip; unsupported schemas rejected without changing live scene\n";
+        // A registry payload that disagrees with the legacy field must name the
+        // entity and print both values, so authors can fix the YAML directly.
+        {
+            auto scene = TomCat::CreateRef<TomCat::Scene>();
+            TomCat::Entity entity = scene->CreateEntity("Mirror Probe");
+            entity.AddComponent<TomCat::SpriteRenderer>().TilingFactor = 2.5f;
+            YAML::Emitter encoded;
+            std::string error;
+            encoded << YAML::BeginMap;
+            if (!TomCat::ComponentRegistry::Get().EncodeComponents(entity, encoded, error))
+                throw std::runtime_error("could not encode components: " + error);
+            encoded << YAML::EndMap;
+            const YAML::Node components = YAML::Load(encoded.c_str())["Components"];
+            entity.GetComponent<TomCat::SpriteRenderer>().TilingFactor = 3.0f;
+            if (TomCat::ComponentRegistry::Get().DecodeComponents(entity, components, error))
+                throw std::runtime_error("mismatched mirrored payload was accepted");
+            for (const char* expected : { "'Mirror Probe'", "TilingFactor",
+                "legacy field = 3", "registry payload = 2.5" })
+            {
+                if (error.find(expected) == std::string::npos)
+                    throw std::runtime_error("mismatch diagnostic lacks '"
+                        + std::string(expected) + "': " + error);
+            }
+        }
+        std::cout << "PASS current scene roundtrip; unsupported schemas rejected without changing live scene; mirrored-payload mismatches report entity and values\n";
         return 0;
     }
     catch (const std::exception& e)

@@ -159,6 +159,8 @@ sidecar 中写入可恢复事务，删除中的源文件暂存于 `Library/Delet
 
 Sprite Renderer 必须保存 `Enabled`、`SpriteHandle`、`Color`、`TilingFactor`、`SortingLayer` 和 `OrderInLayer`。`SpriteHandle` 是唯一的 Sprite 来源，可以指向整图 Texture2D，也可以指向 Atlas 子资源；运行时通过资产系统解析并统一走 textured-quad 渲染路径。Handle 为零时不渲染，资源缺失时使用资产系统的缺失资源占位；排序键最终以稳定 Entity UUID 消除同层同 Order 的不确定性。程序化 `DrawCircle` 不作为普通对象的 Sprite 来源，只保留给碰撞体、遮罩和 Gizmo 等工具渲染。Line Renderer 必须保存 `Enabled`、`Color`、局部空间的 `Start`/`End` 以及像素宽度 `Width`。实体 UUID 必须非零且唯一，父子关系会校验缺失引用、多父节点和环。
 
+**浮点约定**：Scene 11 的内联字段和 `Components` 注册表载荷是同一数据的两份镜像，加载时按 float32 解析后逐字比较。手写或程序生成场景时，浮点必须写成 float32 的精确十进制（例如 `4.8` 要写成 `4.80000019`，Python：`f"{struct.unpack('<f', struct.pack('<f', x))[0]:.9g}"`）。不一致时错误信息会给出实体名称、UUID 以及两侧不同的属性值。
+
 Texture Importer 的 Multiple 模式使用 `.tcmeta` schema v2 中的持久化切片 ID 生成稳定子资源 Handle；每个切片保存以源图左上角为原点的 `Rect`、归一化左下角 `Pivot`、`PixelsPerUnit` 和四边 `Border`。Content Browser 的 `Sprite Atlas...` 编辑器支持手工列表编辑、按透明像素连通区域自动切片、规则网格切片、确定性矩形打包与打包 TGA 导出；自动更新会按名称和几何信息复用稳定 ID，因此重命名以外的重复操作不会重编号现有子资源。字段参与确定性 ArtifactKey、Registry 重建和渲染几何解析，单纯改变文件 mtime 不会重建或重编号子资源。Whole-image Texture2D Handle 继续作为兼容 Sprite 路径。Cook 遇到子资源引用时写入包含切片元数据与 Atlas 导入载荷的自包含条目，Player 无需作者态路径或 `.tcmeta` 即可按同一 Handle 渲染。
 
 `SpriteAnimator` 既保留按帧时长播放的内嵌 Clip，也支持由状态、过渡和 Bool/Int/Float/Trigger 参数构成的状态机；过渡支持条件、AnyState 与归一化 Exit Time，Trigger 在成功使用后消费。Inspector 内置可平移的 Animator Graph：状态和 Any State 节点、带方向的贝塞尔过渡、拖动布局、连线创建、选择与安全删除都复用同一组 Authoring 校验函数。节点位置是编辑器会话状态，不会污染运行时 Scene 数据。动画步进对等总时长的不同帧分割保持确定性，作者数据随 Scene/Prefab/Cook 保存，瞬态播放游标不会序列化；C# 可 Play/Stop、设置各类参数/Trigger 并读取当前状态。

@@ -10,6 +10,7 @@
 #include <exception>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include <yaml-cpp/yaml.h>
 
@@ -344,6 +345,88 @@ namespace TomCat {
 			return false;
 		}
 
+		// Diagnostics for mirrored-payload mismatches: name the entity and
+		// list each differing property with both values, so authors do not
+		// have to diff the YAML by hand. Scalars print as written; a common
+		// cause is a float that is not an exact float32 decimal.
+		std::string DescribeEntityForDiagnostics(Entity entity)
+		{
+			std::string result = " (entity";
+			if (entity.HasComponent<Tag>())
+				result += " '" + entity.GetComponent<Tag>()._Tag + "'";
+			if (entity.HasComponent<ID>())
+				result += " " + std::to_string(static_cast<uint64_t>(entity.GetComponent<ID>().id));
+			return result + ")";
+		}
+
+		std::string CompactYaml(const YAML::Node& node)
+		{
+			if (!node)
+				return "<missing>";
+			YAML::Emitter out;
+			out << YAML::Flow << node;
+			return out.good() ? std::string(out.c_str()) : YAML::Dump(node);
+		}
+
+		void CollectPayloadDifferences(const YAML::Node& expected,
+			const YAML::Node& actual, const std::string& path,
+			std::vector<std::string>& lines)
+		{
+			constexpr size_t MaxReported = 8;
+			if (lines.size() >= MaxReported)
+				return;
+			if (expected && actual && expected.IsMap() && actual.IsMap())
+			{
+				std::vector<std::string> keys;
+				for (const auto& item : expected) keys.push_back(item.first.as<std::string>());
+				for (const auto& item : actual)
+				{
+					const std::string key = item.first.as<std::string>();
+					if (!expected[key]) keys.push_back(key);
+				}
+				for (const std::string& key : keys)
+					CollectPayloadDifferences(expected[key], actual[key],
+						path.empty() ? key : path + "." + key, lines);
+				return;
+			}
+			if (expected && actual && expected.IsSequence() && actual.IsSequence()
+				&& expected.size() == actual.size())
+			{
+				for (size_t i = 0; i < expected.size(); ++i)
+				{
+					// Property records carry a StableName; prefer it over the
+					// index so the message names the field the author wrote.
+					std::string label = "[" + std::to_string(i) + "]";
+					const YAML::Node element = expected[i];
+					if (element.IsMap() && element["StableName"]
+						&& element["StableName"].IsScalar())
+						label = element["StableName"].as<std::string>();
+					CollectPayloadDifferences(element, actual[i],
+						path.empty() ? label : path + "." + label, lines);
+				}
+				return;
+			}
+			const std::string expectedText = CompactYaml(expected);
+			const std::string actualText = CompactYaml(actual);
+			if (expectedText != actualText)
+				lines.push_back((path.empty() ? std::string("<root>") : path)
+					+ ": legacy field = " + expectedText
+					+ ", registry payload = " + actualText);
+		}
+
+		std::string DescribePayloadDifferences(const YAML::Node& expected,
+			const YAML::Node& actual)
+		{
+			std::vector<std::string> lines;
+			CollectPayloadDifferences(expected, actual, "", lines);
+			if (lines.empty())
+				return "; the values match but their YAML spelling differs";
+			std::string result;
+			for (const std::string& line : lines)
+				result += "; " + line;
+			return result + " (floats must be written as exact float32 decimals; see PROJECT_SYSTEM.md)";
+		}
+
 		bool MirroredPayloadMatches(const ComponentDescriptor& descriptor,
 			Entity entity, const YAML::Node& properties, std::string& error)
 		{
@@ -357,7 +440,9 @@ namespace TomCat {
 				if (YAML::Dump(expected) != YAML::Dump(properties))
 				{
 					error = descriptor.StableName
-						+ " registry payload disagrees with its legacy Scene 11 field";
+						+ " registry payload disagrees with its legacy Scene 11 field"
+						+ DescribeEntityForDiagnostics(entity)
+						+ DescribePayloadDifferences(expected, properties);
 					return false;
 				}
 				return true;
