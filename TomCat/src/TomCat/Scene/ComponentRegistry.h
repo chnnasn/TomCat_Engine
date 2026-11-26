@@ -52,6 +52,7 @@ namespace TomCat {
 		inline constexpr uint64_t Grid2D = 0x9f00000000000014ULL;
 		inline constexpr uint64_t TilemapRenderer2D = 0x9f00000000000015ULL;
 		inline constexpr uint64_t TilemapCollider2D = 0x9f00000000000019ULL;
+		inline constexpr uint64_t PostProcess2D = 0x9f0000000000001aULL;
 
 		// Property IDs below preserve the numeric IDs exposed by the original
 		// gameplay ABI. They are now persisted 64-bit identities owned by the
@@ -204,6 +205,23 @@ namespace TomCat {
 			inline constexpr uint64_t Friction = 1503;
 			inline constexpr uint64_t Restitution = 1504;
 			inline constexpr uint64_t RestitutionThreshold = 1505;
+		}
+		namespace PostProcess2DProperties {
+			inline constexpr uint64_t Enabled = 1600;
+			inline constexpr uint64_t PaletteSwapEnabled = 1601;
+			inline constexpr uint64_t PaletteOldDark = 1602;
+			inline constexpr uint64_t PaletteOldLight = 1603;
+			inline constexpr uint64_t PaletteOldPrimary = 1604;
+			inline constexpr uint64_t PaletteOldSecondary = 1605;
+			inline constexpr uint64_t PaletteNewDark = 1606;
+			inline constexpr uint64_t PaletteNewLight = 1607;
+			inline constexpr uint64_t PaletteNewPrimary = 1608;
+			inline constexpr uint64_t PaletteNewSecondary = 1609;
+			inline constexpr uint64_t PaletteMatchThreshold = 1610;
+			inline constexpr uint64_t MaskEnabled = 1611;
+			inline constexpr uint64_t MaskProgress = 1612;
+			inline constexpr uint64_t MaskColor = 1613;
+			inline constexpr uint64_t MaskSprite = 1614;
 		}
 		namespace ParticleSystem2DProperties {
 			inline constexpr uint64_t Enabled = 1100;

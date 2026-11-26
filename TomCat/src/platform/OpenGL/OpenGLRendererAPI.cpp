@@ -4,7 +4,9 @@
 
 #include "OpenGLApi.h"
 
+#include <array>
 #include <cmath>
+#include <vector>
 
 namespace TomCat {
 
@@ -65,6 +67,79 @@ namespace TomCat {
             GLfloat m_ClearColor[4]{};
             GLboolean m_Depth{}, m_Blend{}, m_Cull{}, m_DepthWrite{};
         };
+
+        // Captures and restores the GL state one full-screen post-process pass
+        // mutates. ApplyColorGrade keeps its own bespoke capture; this scope is
+        // shared by the palette-swap and mask-transition passes, whose needs
+        // match (draw target, draw buffers, program, VAO, texture units 0-1,
+        // and the toggled caps).
+        class FullscreenPassScope final {
+        public:
+            explicit FullscreenPassScope(int maxDrawBuffers)
+            {
+                glGetIntegerv(GL_VIEWPORT, m_Viewport);
+                m_Valid = m_Viewport[2] > 0 && m_Viewport[3] > 0;
+                glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &m_Draw);
+                glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &m_Read);
+                glGetIntegerv(GL_READ_BUFFER, &m_ReadBuffer);
+                m_DrawReadBuffer = m_ReadBuffer;
+                if (m_Draw != m_Read) {
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Draw);
+                    glGetIntegerv(GL_READ_BUFFER, &m_DrawReadBuffer);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Read);
+                }
+                glGetIntegerv(GL_CURRENT_PROGRAM, &m_Program);
+                glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &m_VertexArray);
+                glGetIntegerv(GL_ACTIVE_TEXTURE, &m_ActiveTexture);
+                glActiveTexture(GL_TEXTURE0);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_Textures[0]);
+                glActiveTexture(GL_TEXTURE1);
+                glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_Textures[1]);
+                glActiveTexture(m_ActiveTexture);
+                m_Depth = glIsEnabled(GL_DEPTH_TEST);
+                m_Blend = glIsEnabled(GL_BLEND);
+                m_Scissor = glIsEnabled(GL_SCISSOR_TEST);
+                m_Stencil = glIsEnabled(GL_STENCIL_TEST);
+                m_Buffers.assign(static_cast<size_t>(m_Draw ? maxDrawBuffers : 1),
+                    GL_NONE);
+                for (size_t i = 0; i < m_Buffers.size(); ++i) {
+                    GLint value = 0;
+                    glGetIntegerv(GL_DRAW_BUFFER0 + static_cast<GLenum>(i), &value);
+                    m_Buffers[i] = static_cast<GLenum>(value);
+                }
+            }
+            ~FullscreenPassScope() {
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_Draw);
+                glDrawBuffers(static_cast<GLsizei>(m_Buffers.size()), m_Buffers.data());
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Draw);
+                glReadBuffer(m_DrawReadBuffer);
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, m_Read);
+                glReadBuffer(m_ReadBuffer);
+                glUseProgram(m_Program);
+                glBindVertexArray(m_VertexArray);
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, m_Textures[0]);
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, m_Textures[1]);
+                glActiveTexture(m_ActiveTexture);
+                SetEnabled(GL_DEPTH_TEST, m_Depth);
+                SetEnabled(GL_BLEND, m_Blend);
+                SetEnabled(GL_SCISSOR_TEST, m_Scissor);
+                SetEnabled(GL_STENCIL_TEST, m_Stencil);
+            }
+            bool Valid() const { return m_Valid; }
+            const GLint* Viewport() const { return m_Viewport; }
+            GLint DrawFramebuffer() const { return m_Draw; }
+        private:
+            static void SetEnabled(GLenum capability, bool enabled) {
+                if (enabled) glEnable(capability);
+                else glDisable(capability);
+            }
+            GLint m_Viewport[4]{}, m_Draw{}, m_Read{}, m_ReadBuffer{}, m_DrawReadBuffer{};
+            GLint m_Program{}, m_VertexArray{}, m_ActiveTexture{}, m_Textures[2]{};
+            bool m_Depth{}, m_Blend{}, m_Scissor{}, m_Stencil{}, m_Valid = false;
+            std::vector<GLenum> m_Buffers;
+        };
     }
 
     Scope<RenderState> OpenGLRendererAPI::CaptureState() { return CreateScope<OpenGLRenderState>(); }
@@ -86,6 +161,20 @@ namespace TomCat {
         if (m_GradeVAO) glDeleteVertexArrays(1,&m_GradeVAO);
         m_GradeTexture=m_GradeFramebuffer=m_GradeVAO=0; m_GradeWidth=m_GradeHeight=0;
         m_GradeFramebufferComplete=false;
+        // Releases every embedded full-screen pass resource, not just the
+        // original color grade.
+        m_PaletteShader.reset(); m_MaskShader.reset();
+        m_PaletteUniform.reset(); m_MaskUniform.reset();
+        if (m_PaletteTexture) glDeleteTextures(1,&m_PaletteTexture);
+        if (m_PaletteFramebuffer) glDeleteFramebuffers(1,&m_PaletteFramebuffer);
+        if (m_MaskTexture) glDeleteTextures(1,&m_MaskTexture);
+        if (m_MaskFramebuffer) glDeleteFramebuffers(1,&m_MaskFramebuffer);
+        m_PaletteTexture=m_PaletteFramebuffer=0;
+        m_PaletteWidth=m_PaletteHeight=0;
+        m_PaletteFramebufferComplete=false;
+        m_MaskTexture=m_MaskFramebuffer=0;
+        m_MaskWidth=m_MaskHeight=0;
+        m_MaskFramebufferComplete=false;
     }
     void OpenGLRendererAPI::ApplyColorGrade(float exposure,float saturation,float vignette) {
         if (!std::isfinite(exposure) || !std::isfinite(saturation) || !std::isfinite(vignette)) return;
@@ -168,6 +257,178 @@ void main(){vec4 color=texture(u_Source,v_UV);vec3 rgb=color.rgb*exp2(u_Grade.x)
         m_GradeShader->Bind();
         const glm::vec4 grade{std::clamp(exposure,-10.f,10.f),std::clamp(saturation,0.f,2.f),std::clamp(vignette,0.f,1.f),0};
         m_GradeUniform->SetData(&grade,sizeof(grade));
+        glBindVertexArray(m_GradeVAO);glDrawArrays(GL_TRIANGLES,0,3);
+    }
+
+    bool OpenGLRendererAPI::PrepareFullscreenCopyTarget(uint32_t& texture,
+        uint32_t& framebuffer, bool& framebufferComplete, int& width,
+        int& height, const int32_t viewport[4], bool nearest) {
+        if(!texture || width!=viewport[2] || height!=viewport[3]) {
+            framebufferComplete=false;
+            // A fresh image also makes allocation failure incomplete, instead of
+            // accidentally accepting a complete texture with the previous size.
+            if (texture) glDeleteTextures(1,&texture);
+            texture=0;
+            glGenTextures(1,&texture);
+            if (!texture) return false;
+            glBindTexture(GL_TEXTURE_2D,texture);
+            glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,viewport[2],viewport[3],0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+            const GLint filter=nearest?GL_NEAREST:GL_LINEAR;
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,filter);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,filter);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+            width=viewport[2];height=viewport[3];
+        }
+        else glBindTexture(GL_TEXTURE_2D,texture);
+        if (!framebuffer) {
+            framebufferComplete=false;
+            glGenFramebuffers(1,&framebuffer);
+        }
+        if (!framebuffer) return false;
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,framebuffer);
+        // This framebuffer and its draw buffers are private to this pass. Only
+        // resource/storage changes invalidate completeness; ordinary frames do not.
+        if (!framebufferComplete) {
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,texture,0);
+            const GLenum destination=GL_COLOR_ATTACHMENT0;glDrawBuffers(1,&destination);
+            if(glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) {
+                width=height=0; // retry storage allocation next time
+                return false;
+            }
+            framebufferComplete=true;
+        }
+        return true;
+    }
+
+    void OpenGLRendererAPI::ApplyPaletteSwap(const glm::vec4 (&oldColors)[4],
+        const glm::vec4 (&newColors)[4], float threshold) {
+        for (int index = 0; index < 4; ++index)
+            if (!std::isfinite(oldColors[index].x) || !std::isfinite(oldColors[index].y)
+                || !std::isfinite(oldColors[index].z) || !std::isfinite(oldColors[index].w)
+                || !std::isfinite(newColors[index].x) || !std::isfinite(newColors[index].y)
+                || !std::isfinite(newColors[index].z) || !std::isfinite(newColors[index].w))
+                return;
+        if (!std::isfinite(threshold)) return;
+        FullscreenPassScope scope(m_MaxDrawBuffers);
+        if (!scope.Valid()) return;
+        const GLint* const viewport = scope.Viewport();
+        if (!m_PaletteShader) {
+            // Desktop GL compiles embedded sources through the Vulkan SPIR-V
+            // dialect, so pass parameters ride a std140 block like the grade.
+            m_PaletteShader=Shader::Create("TomCat.PaletteSwap", R"(#version 450 core
+layout(location=0) out vec2 v_UV;
+void main(){vec2 p=vec2((gl_VertexIndex<<1)&2,gl_VertexIndex&2);v_UV=p;gl_Position=vec4(p*2.0-1.0,0,1);}
+)", R"(#version 450 core
+layout(location=0) in vec2 v_UV;
+layout(location=0) out vec4 o_Color;
+layout(binding=0) uniform sampler2D u_Source;
+layout(std140,binding=2) uniform PaletteSwap {
+    vec4 u_OldDark,u_OldLight,u_OldPrimary,u_OldSecondary;
+    vec4 u_NewDark,u_NewLight,u_NewPrimary,u_NewSecondary;
+    vec4 u_Parameters;
+};
+void main(){
+    vec4 color=texture(u_Source,v_UV);
+    vec4 replaced=color;
+    vec4 tolerance=vec4(max(u_Parameters.x,0.0));
+    if (all(lessThanEqual(abs(color-u_OldDark),tolerance))) replaced=u_NewDark;
+    if (all(lessThanEqual(abs(color-u_OldLight),tolerance))) replaced=u_NewLight;
+    if (all(lessThanEqual(abs(color-u_OldPrimary),tolerance))) replaced=u_NewPrimary;
+    if (all(lessThanEqual(abs(color-u_OldSecondary),tolerance))) replaced=u_NewSecondary;
+    o_Color=replaced;
+}
+)");
+        }
+        if (!m_PaletteShader) return;
+        if (!m_PaletteUniform)
+            m_PaletteUniform=UniformBuffer::Create(9*sizeof(glm::vec4),2);
+        if (!m_PaletteUniform) return;
+        if (!m_GradeVAO) glGenVertexArrays(1,&m_GradeVAO);
+        if (!m_GradeVAO) return;
+        glActiveTexture(GL_TEXTURE0);
+        // Exact palette matching requires the undeformed source pixel.
+        if (!PrepareFullscreenCopyTarget(m_PaletteTexture,m_PaletteFramebuffer,
+            m_PaletteFramebufferComplete,m_PaletteWidth,m_PaletteHeight,viewport,true))
+            return;
+        const GLint draw=scope.DrawFramebuffer();
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,draw);
+        glReadBuffer(draw ? GL_COLOR_ATTACHMENT0 : GL_BACK);
+        glDisable(GL_SCISSOR_TEST);
+        glBlitFramebuffer(viewport[0],viewport[1],viewport[0]+viewport[2],viewport[1]+viewport[3],0,0,viewport[2],viewport[3],GL_COLOR_BUFFER_BIT,GL_NEAREST);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,draw);
+        const GLenum output=draw ? GL_COLOR_ATTACHMENT0 : GL_BACK;
+        glDrawBuffers(1,&output);
+        glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glDisable(GL_STENCIL_TEST);
+        m_PaletteShader->Bind();
+        const std::array<glm::vec4,9> palettePayload={
+            oldColors[0],oldColors[1],oldColors[2],oldColors[3],
+            newColors[0],newColors[1],newColors[2],newColors[3],
+            glm::vec4(std::clamp(threshold,0.0f,1.0f),0.0f,0.0f,0.0f)};
+        m_PaletteUniform->SetData(palettePayload.data(),
+            palettePayload.size()*sizeof(glm::vec4));
+        glBindVertexArray(m_GradeVAO);glDrawArrays(GL_TRIANGLES,0,3);
+    }
+
+    void OpenGLRendererAPI::ApplyMaskTransition(const Ref<Texture2D>& mask,
+        float progress, const glm::vec4& coverColor) {
+        if (!mask || !mask->IsLoaded()) return;
+        if (!std::isfinite(progress) || !std::isfinite(coverColor.x)
+            || !std::isfinite(coverColor.y) || !std::isfinite(coverColor.z)
+            || !std::isfinite(coverColor.w))
+            return;
+        // Progress 0 leaves the target untouched, matching the neutral grade.
+        const float clampedProgress = std::clamp(progress,0.0f,1.0f);
+        if (clampedProgress <= 0.0f) return;
+        FullscreenPassScope scope(m_MaxDrawBuffers);
+        if (!scope.Valid()) return;
+        const GLint* const viewport = scope.Viewport();
+        if (!m_MaskShader) {
+            m_MaskShader=Shader::Create("TomCat.MaskTransition", R"(#version 450 core
+layout(location=0) out vec2 v_UV;
+void main(){vec2 p=vec2((gl_VertexIndex<<1)&2,gl_VertexIndex&2);v_UV=p;gl_Position=vec4(p*2.0-1.0,0,1);}
+)", R"(#version 450 core
+layout(location=0) in vec2 v_UV;
+layout(location=0) out vec4 o_Color;
+layout(binding=0) uniform sampler2D u_Source;
+layout(binding=1) uniform sampler2D u_Mask;
+layout(std140,binding=2) uniform MaskTransition {
+    vec4 u_Parameters;
+    vec4 u_Cover;
+};
+void main(){
+    vec4 source=texture(u_Source,v_UV);
+    float masked=texture(u_Mask,v_UV).a;
+    float cover=u_Parameters.x<=0.0 ? 0.0 : step(masked,u_Parameters.x);
+    o_Color=mix(source,u_Cover,cover);
+}
+)");
+        }
+        if (!m_MaskShader) return;
+        if (!m_MaskUniform)
+            m_MaskUniform=UniformBuffer::Create(2*sizeof(glm::vec4),2);
+        if (!m_MaskUniform) return;
+        if (!m_GradeVAO) glGenVertexArrays(1,&m_GradeVAO);
+        if (!m_GradeVAO) return;
+        glActiveTexture(GL_TEXTURE0);
+        if (!PrepareFullscreenCopyTarget(m_MaskTexture,m_MaskFramebuffer,
+            m_MaskFramebufferComplete,m_MaskWidth,m_MaskHeight,viewport,false))
+            return;
+        const GLint draw=scope.DrawFramebuffer();
+        glBindFramebuffer(GL_READ_FRAMEBUFFER,draw);
+        glReadBuffer(draw ? GL_COLOR_ATTACHMENT0 : GL_BACK);
+        glDisable(GL_SCISSOR_TEST);
+        glBlitFramebuffer(viewport[0],viewport[1],viewport[0]+viewport[2],viewport[1]+viewport[3],0,0,viewport[2],viewport[3],GL_COLOR_BUFFER_BIT,GL_NEAREST);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER,draw);
+        const GLenum output=draw ? GL_COLOR_ATTACHMENT0 : GL_BACK;
+        glDrawBuffers(1,&output);
+        glDisable(GL_DEPTH_TEST);glDisable(GL_BLEND);glDisable(GL_STENCIL_TEST);
+        mask->Bind(1);
+        m_MaskShader->Bind();
+        const std::array<glm::vec4,2> maskPayload={
+            glm::vec4(clampedProgress,0.0f,0.0f,0.0f), coverColor};
+        m_MaskUniform->SetData(maskPayload.data(),
+            maskPayload.size()*sizeof(glm::vec4));
         glBindVertexArray(m_GradeVAO);glDrawArrays(GL_TRIANGLES,0,3);
     }
 

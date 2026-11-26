@@ -42,6 +42,8 @@ internal static class GeneratedRegisteredComponentProxies
                 static entity => new Environment3D(entity)),
             [typeof(TilemapCollider2D)] = new(0x9f00000000000019UL,
                 static entity => new TilemapCollider2D(entity)),
+            [typeof(PostProcess2D)] = new(0x9f0000000000001aUL,
+                static entity => new PostProcess2D(entity)),
             [typeof(TextRenderer)] = new(0x9f01000000000001UL,
                 static entity => new TextRenderer(entity)),
             [typeof(Canvas)] = new(0x9f01000000000002UL,
@@ -960,6 +962,120 @@ public sealed partial class TilemapCollider2D : IEntityComponent
         get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000005e1UL);
         set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
             0x00000000000005e1UL, value);
+    }
+}
+
+[RegisteredComponent(0x9f0000000000001aUL)]
+public sealed partial class PostProcess2D : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f0000000000001aUL;
+
+    internal PostProcess2D(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000640UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000640UL, value);
+    }
+
+    public bool PaletteSwapEnabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x0000000000000641UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x0000000000000641UL, value);
+    }
+
+    public Color PaletteOldDark
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000642UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000642UL, value);
+    }
+
+    public Color PaletteOldLight
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000643UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000643UL, value);
+    }
+
+    public Color PaletteOldPrimary
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000644UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000644UL, value);
+    }
+
+    public Color PaletteOldSecondary
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000645UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000645UL, value);
+    }
+
+    public Color PaletteNewDark
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000646UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000646UL, value);
+    }
+
+    public Color PaletteNewLight
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000647UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000647UL, value);
+    }
+
+    public Color PaletteNewPrimary
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000648UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000648UL, value);
+    }
+
+    public Color PaletteNewSecondary
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x0000000000000649UL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x0000000000000649UL, value);
+    }
+
+    public float PaletteMatchThreshold
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000064aUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000064aUL, value);
+    }
+
+    public bool MaskEnabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x000000000000064bUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x000000000000064bUL, value);
+    }
+
+    public float MaskProgress
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x000000000000064cUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x000000000000064cUL, value);
+    }
+
+    public Color MaskColor
+    {
+        get => RegisteredComponentProperties.GetColor(Entity, RegisteredTypeId, 0x000000000000064dUL);
+        set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
+            0x000000000000064dUL, value);
+    }
+
+    public AssetRef<Texture2DAsset> MaskSprite
+    {
+        get => new(RegisteredComponentProperties.GetUInt64(Entity, RegisteredTypeId, 0x000000000000064eUL));
+        set => RegisteredComponentProperties.SetUInt64(Entity, RegisteredTypeId,
+            0x000000000000064eUL, value.Handle);
     }
 }
 

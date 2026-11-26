@@ -4598,7 +4598,46 @@ namespace TomCat {
 				camera._Camera.GetProjection() * glm::inverse(cameraTransform),
 				RuntimeUIVisibilityMode::Gameplay);
 			Renderer2D::EndScene();
-            RenderCommand::ApplyColorGrade(camera.Exposure,camera.Saturation,camera.Vignette);
+			RenderCommand::ApplyColorGrade(camera.Exposure,camera.Saturation,camera.Vignette);
+			// PostProcess2D extends the camera's built-in grade with engine
+			// built-in full-screen passes. The fixed order is grade, palette
+			// swap, mask transition, mirroring repaint-then-cover semantics;
+			// gameplay UI renders afterwards and stays unfiltered.
+			if (mainCameraEntity.HasComponent<PostProcess2D>())
+			{
+				const PostProcess2D& postProcess =
+					mainCameraEntity.GetComponent<PostProcess2D>();
+				if (postProcess.Enabled)
+				{
+					if (postProcess.PaletteSwapEnabled)
+					{
+						const glm::vec4 oldColors[4] = {
+							postProcess.PaletteOldDark,
+							postProcess.PaletteOldLight,
+							postProcess.PaletteOldPrimary,
+							postProcess.PaletteOldSecondary };
+						const glm::vec4 newColors[4] = {
+							postProcess.PaletteNewDark,
+							postProcess.PaletteNewLight,
+							postProcess.PaletteNewPrimary,
+							postProcess.PaletteNewSecondary };
+						RenderCommand::ApplyPaletteSwap(oldColors, newColors,
+							postProcess.PaletteMatchThreshold);
+					}
+					if (postProcess.MaskEnabled)
+					{
+						const Ref<Texture2D> mask = static_cast<uint64_t>(
+							postProcess.MaskSprite) != 0
+							? AssetManager::Get().LoadTexture(
+								postProcess.MaskSprite)
+							: Ref<Texture2D>();
+						// A missing mask asset skips the pass; a resolved one
+						// with zero progress early-outs inside the API.
+						RenderCommand::ApplyMaskTransition(mask,
+							postProcess.MaskProgress, postProcess.MaskColor);
+					}
+				}
+			}
 		}
 		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
 			m_ViewportHeight, 96.0f * m_RuntimeUIDPIScale,

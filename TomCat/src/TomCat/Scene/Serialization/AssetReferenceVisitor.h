@@ -24,7 +24,8 @@ namespace TomCat {
 		Font,
 		UIImage,
 		CSharpScript,
-		ScriptField
+		ScriptField,
+		PostProcessMask
 	};
 
 	// A schema-aware reference emitted from serialized entity/component data.

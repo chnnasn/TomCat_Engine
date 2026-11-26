@@ -9,6 +9,16 @@ namespace TomCat {
 	public:
 
 		static void ApplyColorGrade(float exposure, float saturation, float vignette) { s_RendererAPI->ApplyColorGrade(exposure, saturation, vignette); }
+		static void ApplyPaletteSwap(const glm::vec4 (&oldColors)[4],
+			const glm::vec4 (&newColors)[4], float threshold)
+		{
+			s_RendererAPI->ApplyPaletteSwap(oldColors, newColors, threshold);
+		}
+		static void ApplyMaskTransition(const Ref<Texture2D>& mask, float progress,
+			const glm::vec4& coverColor)
+		{
+			s_RendererAPI->ApplyMaskTransition(mask, progress, coverColor);
+		}
         static void ReleaseColorGrade() { s_RendererAPI->ReleaseColorGrade(); }
 
         inline static void Init()

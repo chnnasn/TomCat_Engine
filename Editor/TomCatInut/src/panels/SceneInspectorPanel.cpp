@@ -1409,6 +1409,63 @@ namespace TomCat {
 			m_Shared.MarkModified();
 	}
 
+	void SceneInspectorPanel::DrawPostProcess2DInspector(PostProcess2D& post)
+	{
+		bool changed = false;
+		ImGui::TextDisabled(
+			"Runs after this camera's grade, before gameplay UI. "
+			"Order: Palette Swap, then Mask Transition.");
+		if (ImGui::TreeNodeEx("Palette Swap",
+			ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen
+			| ImGuiTreeNodeFlags_SpanAvailWidth))
+		{
+			changed |= ImGui::Checkbox("Enabled##PaletteSwap",
+				&post.PaletteSwapEnabled);
+			ImGui::TextDisabled("Old colors");
+			changed |= DrawColorField("Old Dark", glm::value_ptr(post.PaletteOldDark));
+			changed |= DrawColorField("Old Light", glm::value_ptr(post.PaletteOldLight));
+			changed |= DrawColorField("Old Primary", glm::value_ptr(post.PaletteOldPrimary));
+			changed |= DrawColorField("Old Secondary", glm::value_ptr(post.PaletteOldSecondary));
+			ImGui::TextDisabled("New colors");
+			changed |= DrawColorField("New Dark", glm::value_ptr(post.PaletteNewDark));
+			changed |= DrawColorField("New Light", glm::value_ptr(post.PaletteNewLight));
+			changed |= DrawColorField("New Primary", glm::value_ptr(post.PaletteNewPrimary));
+			changed |= DrawColorField("New Secondary", glm::value_ptr(post.PaletteNewSecondary));
+			float threshold = post.PaletteMatchThreshold;
+			if (ImGui::DragFloat("Match Threshold", &threshold, 0.005f, 0.0f, 1.0f)
+				&& std::isfinite(threshold))
+			{
+				post.PaletteMatchThreshold = std::clamp(threshold, 0.0f, 1.0f);
+				changed = true;
+			}
+			ImGui::TreePop();
+		}
+		if (ImGui::TreeNodeEx("Mask Transition",
+			ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DefaultOpen
+			| ImGuiTreeNodeFlags_SpanAvailWidth))
+		{
+			changed |= ImGui::Checkbox("Enabled##MaskTransition",
+				&post.MaskEnabled);
+			ImGui::TextUnformatted("Mask Sprite");
+			ImGui::SetNextItemWidth(-1.0f);
+			changed |= DrawAnimatorSpriteField("PostProcessMaskSprite",
+				post.MaskSprite);
+			float progress = post.MaskProgress;
+			if (ImGui::SliderFloat("Progress", &progress, 0.0f, 1.0f, "%.2f")
+				&& std::isfinite(progress))
+			{
+				post.MaskProgress = std::clamp(progress, 0.0f, 1.0f);
+				changed = true;
+			}
+			ImGui::SameLine();
+			ImGui::TextDisabled("(0 open, 1 closed)");
+			changed |= DrawColorField("Cover Color", glm::value_ptr(post.MaskColor));
+			ImGui::TreePop();
+		}
+		if (changed)
+			m_Shared.MarkModified();
+	}
+
 	void SceneInspectorPanel::DrawUIButtonInspector(UIButton& button, Entity entity)
 	{
 		bool changed = ImGui::Checkbox("Interactable", &button.Interactable);
@@ -2713,6 +2770,15 @@ namespace TomCat {
 			EditorIcon::Count, [this](auto& component)
 		{
 			DrawLight2DInspector(component);
+		}, onModified);
+		});
+
+		richInspectors.emplace(ComponentIds::PostProcess2D, [&]()
+		{
+		DrawComponent<PostProcess2D>("Post Process 2D", entity, m_Shared.Icons,
+			EditorIcon::Count, [this](auto& component)
+		{
+			DrawPostProcess2DInspector(component);
 		}, onModified);
 		});
 

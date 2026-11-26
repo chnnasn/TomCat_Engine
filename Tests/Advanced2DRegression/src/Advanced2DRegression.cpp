@@ -305,10 +305,12 @@ namespace {
 	const TomCat::ComponentDescriptor& RequireDescriptor(uint64_t typeId,
 		std::string_view stableName, size_t propertyCount);
 
-	void TestTilemapCollisionPersistence()
+	void TestTilemapCollisionAndPostProcessPersistence()
 	{
 		RequireDescriptor(TomCat::ComponentIds::TilemapCollider2D,
 			"TomCat.TilemapCollider2D", 6);
+		RequireDescriptor(TomCat::ComponentIds::PostProcess2D,
+			"TomCat.PostProcess2D", 15);
 
 		auto scene = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity entity = scene->CreateEntityWithUUID(
@@ -321,6 +323,9 @@ namespace {
 		Require(registry.Add(entity,
 				TomCat::UUID(TomCat::ComponentIds::TilemapCollider2D), error),
 			"TilemapCollider2D descriptor add failed on a Tilemap entity");
+		Require(registry.Add(entity,
+			TomCat::UUID(TomCat::ComponentIds::PostProcess2D), error),
+			"PostProcess2D descriptor add failed");
 		// Adding the collider without a Tilemap must be rejected.
 		TomCat::Entity orphan = scene->CreateEntity("Collider orphan");
 		Require(!registry.Add(orphan,
@@ -352,10 +357,27 @@ namespace {
 		collider.Restitution = 0.25f;
 		collider.RestitutionThreshold = 0.6f;
 
+		auto& post = entity.GetComponent<TomCat::PostProcess2D>();
+		post.PaletteSwapEnabled = true;
+		post.PaletteOldDark = { 0.1f, 0.2f, 0.3f, 1.0f };
+		post.PaletteOldLight = { 0.2f, 0.3f, 0.4f, 1.0f };
+		post.PaletteOldPrimary = { 0.3f, 0.4f, 0.5f, 1.0f };
+		post.PaletteOldSecondary = { 0.4f, 0.5f, 0.6f, 1.0f };
+		post.PaletteNewDark = { 0.6f, 0.5f, 0.4f, 1.0f };
+		post.PaletteNewLight = { 0.7f, 0.6f, 0.5f, 1.0f };
+		post.PaletteNewPrimary = { 0.8f, 0.7f, 0.6f, 1.0f };
+		post.PaletteNewSecondary = { 0.9f, 0.8f, 0.7f, 1.0f };
+		post.PaletteMatchThreshold = 0.06f;
+		post.MaskEnabled = true;
+		post.MaskProgress = 0.35f;
+		post.MaskColor = { 0.15f, 0.18f, 0.2f, 1.0f };
+		post.MaskSprite = TomCat::AssetHandle(7001);
+
 		std::string document;
 		Require(TomCat::SceneArchiveCodec::Encode(scene, document, error),
 			"collision scene serialization failed");
 		Require(document.find("TomCat.TilemapCollider2D") != std::string::npos
+			&& document.find("TomCat.PostProcess2D") != std::string::npos
 			&& document.find("Collision: 1") != std::string::npos,
 			"collision scene component records are missing");
 
@@ -366,7 +388,8 @@ namespace {
 			"collision scene deserialization failed");
 		TomCat::Entity loaded = decoded->FindEntityByUUID(entity.GetUUID());
 		Require(loaded && loaded.HasComponent<TomCat::Tilemap2D>()
-			&& loaded.HasComponent<TomCat::TilemapCollider2D>(),
+			&& loaded.HasComponent<TomCat::TilemapCollider2D>()
+			&& loaded.HasComponent<TomCat::PostProcess2D>(),
 			"collision components did not round-trip");
 		const auto& loadedTilemap = loaded.GetComponent<TomCat::Tilemap2D>();
 		Require(TomCat::Tilemap2DRuntime::FindCell(loadedTilemap, { 0, 0 })
@@ -385,6 +408,17 @@ namespace {
 			&& Near(loadedCollider.RestitutionThreshold,
 				collider.RestitutionThreshold),
 			"TilemapCollider2D values did not round-trip");
+		const auto& loadedPost = loaded.GetComponent<TomCat::PostProcess2D>();
+		Require(loadedPost.PaletteSwapEnabled
+			&& Near(loadedPost.PaletteOldDark, post.PaletteOldDark)
+			&& Near(loadedPost.PaletteNewSecondary, post.PaletteNewSecondary)
+			&& Near(loadedPost.PaletteMatchThreshold, post.PaletteMatchThreshold)
+			&& loadedPost.MaskEnabled
+			&& Near(loadedPost.MaskProgress, post.MaskProgress)
+			&& Near(loadedPost.MaskColor, post.MaskColor)
+			&& loadedPost.MaskSprite == post.MaskSprite,
+			"PostProcess2D values did not round-trip");
+
 		// Scenes written before the Collision field existed carry no key per
 		// cell; decoding them must keep every cell at the None default.
 		YAML::Node root = YAML::Load(document);
@@ -423,8 +457,9 @@ namespace {
 				clonedEntity.GetComponent<TomCat::Tilemap2D>(), { 0, 0 })
 				->Collision == TomCat::TilemapCollisionMode2D::Solid
 			&& clonedEntity.GetComponent<TomCat::TilemapCollider2D>()
-				.CollisionLayer == collider.CollisionLayer,
-			"Scene clone dropped tilemap collision data");
+				.CollisionLayer == collider.CollisionLayer
+			&& clonedEntity.GetComponent<TomCat::PostProcess2D>().MaskEnabled,
+			"Scene clone dropped tilemap collision or post-process data");
 	}
 
 	TomCat::ParticleSystem2D MakeParticleFixture()
@@ -839,7 +874,7 @@ int main()
 		TestMultiSelectionPropertyTransaction();
 		TestTilemapEditingAndTransform();
 		TestTilemapCollisionMerge();
-		TestTilemapCollisionPersistence();
+		TestTilemapCollisionAndPostProcessPersistence();
 		TestDeterministicParticleRuntime();
 		TestLightAttenuation();
 		TestRegistrySceneRoundTripAndReferences();

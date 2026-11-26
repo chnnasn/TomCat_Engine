@@ -58,7 +58,10 @@ private:
 
 class VulkanTexture2D final : public Texture2D {
 public:
-    VulkanTexture2D(uint32_t width, uint32_t height);
+    // `nearest` selects the sampler created with the image allocation; the
+    // palette-swap post-process needs NEAREST so exact color matching sees the
+    // undeformed source pixel instead of an interpolated one.
+    VulkanTexture2D(uint32_t width, uint32_t height, bool nearest = false);
     explicit VulkanTexture2D(const std::filesystem::path& path);
     VulkanTexture2D(const void* encoded, size_t size, const std::filesystem::path& path);
     ~VulkanTexture2D() override;

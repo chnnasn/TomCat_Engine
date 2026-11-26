@@ -38,9 +38,21 @@ void VulkanUniformBuffer::SetData(const void* data, uint32_t size, uint32_t offs
     m_Device->Uniforms.at(m_Binding) = bytes;
 }
 
-VulkanTexture2D::VulkanTexture2D(uint32_t width, uint32_t height) : m_Device(VulkanDevice::Current()) {
-    m_Image = m_Device->Image(width, height, VK_FORMAT_R8G8B8A8_UNORM,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+VulkanTexture2D::VulkanTexture2D(uint32_t width, uint32_t height, bool nearest)
+    : m_Device(VulkanDevice::Current()) {
+    if (nearest) {
+        // Full-screen passes clamp: the source region covers the whole target,
+        // and edge clamping keeps 1:1 copies from bleeding neighbouring data.
+        TextureSampling sampling;
+        sampling.Filter = TextureFilterMode::Nearest;
+        sampling.WrapU = sampling.WrapV = TextureWrapMode::Clamp;
+        m_Image = m_Device->Image(width, height, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_ASPECT_COLOR_BIT, 1, sampling);
+    } else {
+        m_Image = m_Device->Image(width, height, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
+    }
     m_ProfileBytes = uint64_t(width) * height * 4;
     ProfileResourceTracker::Get().Texture(1, static_cast<int64_t>(m_ProfileBytes));
 }

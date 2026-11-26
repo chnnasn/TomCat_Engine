@@ -71,7 +71,7 @@ private:
 struct State {
     std::array<GLint,4> Viewport{}, ScissorBox{};
     GLint Draw=0, Read=0, ReadBuffer=0, DrawReadBuffer=0;
-    GLint Program=0, VAO=0, ActiveTexture=0, Texture0=0;
+    GLint Program=0, VAO=0, ActiveTexture=0, Texture0=0, Texture1=0;
     bool Depth=false, Blend=false, Scissor=false, Stencil=false;
     std::vector<GLenum> DrawBuffers;
 
@@ -90,6 +90,8 @@ struct State {
         glGetIntegerv(GL_ACTIVE_TEXTURE,&result.ActiveTexture);
         glActiveTexture(GL_TEXTURE0);
         glGetIntegerv(GL_TEXTURE_BINDING_2D,&result.Texture0);
+        glActiveTexture(GL_TEXTURE1);
+        glGetIntegerv(GL_TEXTURE_BINDING_2D,&result.Texture1);
         glActiveTexture(result.ActiveTexture);
         result.Depth=glIsEnabled(GL_DEPTH_TEST); result.Blend=glIsEnabled(GL_BLEND);
         result.Scissor=glIsEnabled(GL_SCISSOR_TEST); result.Stencil=glIsEnabled(GL_STENCIL_TEST);
@@ -109,7 +111,9 @@ struct State {
         glBindFramebuffer(GL_READ_FRAMEBUFFER,Draw); glReadBuffer(DrawReadBuffer);
         glBindFramebuffer(GL_READ_FRAMEBUFFER,Read); glReadBuffer(ReadBuffer);
         glUseProgram(Program); glBindVertexArray(VAO);
-        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D,Texture0); glActiveTexture(ActiveTexture);
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D,Texture0);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D,Texture1);
+        glActiveTexture(ActiveTexture);
         if (Depth) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
         if (Blend) glEnable(GL_BLEND); else glDisable(GL_BLEND);
         if (Scissor) glEnable(GL_SCISSOR_TEST); else glDisable(GL_SCISSOR_TEST);
@@ -200,6 +204,135 @@ inline void Run() {
     renderer.ReleaseColorGrade();
     renderer.Init();
     Require(calls.CapQueries==2,"renderer reinitialization did not refresh context capabilities");
+}
+
+// Palette-swap and mask-transition passes follow the same contract as the
+// color grade: exact pixel output, untouched caller state, lazily allocated
+// private copy targets that resize once and are not revalidated per frame.
+inline void RunPaletteAndMaskPasses() {
+    using namespace TomCat;
+    GLint maxBuffers=0; glGetIntegerv(GL_MAX_DRAW_BUFFERS,&maxBuffers);
+    struct RestoreState { State Saved; ~RestoreState(){Saved.Restore();} } restore{State::Capture(maxBuffers)};
+    FramebufferSpecification specification;
+    specification.Width=specification.Height=64;
+    specification.Attachments={FramebufferTextureFormat::RGBA8};
+    auto target=Framebuffer::Create(specification);
+    target->Bind(); glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glViewport(0,0,64,64);
+
+    Calls calls;
+    struct PassRenderer : OpenGLRendererAPI { ~PassRenderer(){ReleaseColorGrade();} } renderer;
+    renderer.Init();
+
+    const auto clear=[&](float r,float g,float b,float a) {
+        const GLenum output=GL_COLOR_ATTACHMENT0; glDrawBuffers(1,&output);
+        const GLfloat color[]{r,g,b,a}; glClearBufferfv(GL_COLOR,0,color);
+    };
+    const auto pixel=[&] {
+        std::vector<uint8_t> pixels;
+        Require(target->ReadColorAttachment(0,pixels),"post-process test GPU readback failed");
+        constexpr size_t offset=(16*64+16)*4;
+        return std::array<uint8_t,4>{pixels[offset],pixels[offset+1],pixels[offset+2],pixels[offset+3]};
+    };
+    const auto preserve=[&](auto&& pass, const char* message) {
+        const auto before=State::Capture(maxBuffers);
+        pass();
+        Require(before==State::Capture(maxBuffers),message);
+    };
+
+    // Palette swap: matched source colors repaint, everything else passes through.
+    const glm::vec4 oldColors[4]={{0.8f,0.2f,0.1f,1.0f},{0.15f,0.25f,0.35f,1.0f},
+        {0.4f,0.5f,0.6f,1.0f},{0.9f,0.8f,0.7f,1.0f}};
+    const glm::vec4 newColors[4]={{0.1f,0.9f,0.3f,1.0f},{0.05f,0.05f,0.6f,1.0f},
+        {0.7f,0.15f,0.2f,1.0f},{0.25f,0.5f,0.75f,1.0f}};
+    clear(0.8f,0.2f,0.1f,1.0f);
+    preserve([&]{ renderer.ApplyPaletteSwap(oldColors,newColors,0.02f); },
+        "palette pass changed caller GL state");
+    {
+        const auto rgba=pixel();
+        Require(std::abs(int(rgba[0])-26)<=1 && std::abs(int(rgba[1])-230)<=1
+            && std::abs(int(rgba[2])-77)<=1,
+            "palette pass did not repaint the matched source color");
+        Require(glGetError()==GL_NO_ERROR,"palette pass generated a GL error");
+    }
+    clear(0.5f,0.5f,0.5f,1.0f);
+    renderer.ApplyPaletteSwap(oldColors,newColors,0.02f);
+    {
+        const auto rgba=pixel();
+        Require(std::abs(int(rgba[0])-128)<=1 && std::abs(int(rgba[1])-128)<=1,
+            "palette pass repainted a color outside the palette");
+    }
+    // Tolerance: slightly drifted source color still matches.
+    clear(0.81f,0.19f,0.09f,1.0f);
+    renderer.ApplyPaletteSwap(oldColors,newColors,0.02f);
+    Require(std::abs(int(pixel()[1])-230)<=1,"palette threshold did not absorb the drift");
+    // Steady state: one storage allocation, one attachment, one completeness check.
+    Require(calls.Attachments==1 && calls.Checks==1 && calls.Images==1,
+        "first palette pass did not allocate exactly one copy target");
+    const unsigned paletteBaseAttachments=calls.Attachments, paletteBaseChecks=calls.Checks;
+    renderer.ApplyPaletteSwap(oldColors,newColors,0.02f);
+    Require(calls.Attachments==paletteBaseAttachments && calls.Checks==paletteBaseChecks,
+        "steady palette pass revalidated its copy target");
+    // Resize: storage revalidated once, then reused.
+    glViewport(0,0,48,40);
+    renderer.ApplyPaletteSwap(oldColors,newColors,0.02f);
+    Require(calls.Attachments==2 && calls.Checks==2 && calls.Images==2,
+        "resized palette pass did not revalidate storage");
+    glViewport(0,0,64,64);
+
+    // Mask transition: mask alpha selects which pixels progress covers.
+    const auto mask=Texture2D::Create(64,64);
+    std::vector<uint8_t> maskBytes(64*64*4);
+    for (size_t i=0;i<64*64;++i) {
+        maskBytes[i*4+0]=255; maskBytes[i*4+1]=255; maskBytes[i*4+2]=255;
+        maskBytes[i*4+3]=128; // ~0.502
+    }
+    mask->SetData(maskBytes.data(),static_cast<uint32_t>(maskBytes.size()));
+    clear(0.8f,0.2f,0.1f,1.0f);
+    preserve([&]{ renderer.ApplyMaskTransition(mask,0.4f,glm::vec4(0.0f,0.0f,0.0f,1.0f)); },
+        "mask pass changed caller GL state");
+    {
+        const auto rgba=pixel();
+        Require(std::abs(int(rgba[0])-204)<=2 && std::abs(int(rgba[1])-51)<=2,
+            "mask pass covered pixels its mask kept visible (progress below mask alpha)");
+        Require(glGetError()==GL_NO_ERROR,"mask pass generated a GL error");
+    }
+    renderer.ApplyMaskTransition(mask,0.7f,glm::vec4(0.0f,0.0f,0.0f,1.0f));
+    {
+        const auto rgba=pixel();
+        Require(rgba[0]<=2 && rgba[1]<=2 && rgba[2]<=2,
+            "mask pass did not cover pixels below its progress");
+    }
+    // Neutral progress leaves the source untouched.
+    clear(0.25f,0.5f,0.75f,1.0f);
+    renderer.ApplyMaskTransition(mask,0.0f,glm::vec4(1.0f,1.0f,1.0f,1.0f));
+    {
+        const auto rgba=pixel();
+        Require(std::abs(int(rgba[0])-64)<=2 && std::abs(int(rgba[2])-191)<=2,
+            "zero-progress mask pass modified the source");
+    }
+    // A missing mask never runs the pass.
+    clear(0.25f,0.5f,0.75f,1.0f);
+    renderer.ApplyMaskTransition(nullptr,1.0f,glm::vec4(0.0f,0.0f,0.0f,1.0f));
+    {
+        const auto rgba=pixel();
+        Require(std::abs(int(rgba[0])-64)<=2,"missing-mask pass modified the source");
+    }
+    // Steady state: the mask copy target is allocated once and then reused.
+    const unsigned steadyAttachments=calls.Attachments, steadyChecks=calls.Checks, steadyImages=calls.Images;
+    renderer.ApplyMaskTransition(mask,0.7f,glm::vec4(0.0f,0.0f,0.0f,1.0f));
+    Require(calls.Attachments==steadyAttachments && calls.Checks==steadyChecks
+        && calls.Images==steadyImages,
+        "steady mask pass revalidated its copy target");
+    Require(steadyAttachments>paletteBaseAttachments && steadyChecks>paletteBaseChecks,
+        "first masked pass did not allocate its own copy target");
+    // Zero progress and the missing mask never touch GL resources.
+    renderer.ApplyMaskTransition(mask,0.0f,glm::vec4(1.0f,1.0f,1.0f,1.0f));
+    renderer.ApplyMaskTransition(nullptr,1.0f,glm::vec4(0.0f,0.0f,0.0f,1.0f));
+    Require(calls.Attachments==steadyAttachments && calls.Checks==steadyChecks
+        && calls.Images==steadyImages,
+        "neutral mask passes allocated or revalidated resources");
+    Require(glGetError()==GL_NO_ERROR,"palette/mask regression left a GL error");
 }
 
 } // namespace OpenGLColorGradeRegression

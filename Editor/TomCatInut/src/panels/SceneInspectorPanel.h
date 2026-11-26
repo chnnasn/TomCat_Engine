@@ -59,6 +59,7 @@ namespace TomCat {
 		void DrawTilemapCollider2DInspector(TilemapCollider2D& collider);
 		void DrawParticleSystem2DInspector(ParticleSystem2D& system);
 		void DrawLight2DInspector(Light2D& light);
+		void DrawPostProcess2DInspector(PostProcess2D& post);
 		void DrawUIButtonInspector(UIButton& button, Entity entity);
 		void DrawCSharpScripts(Entity entity);
 

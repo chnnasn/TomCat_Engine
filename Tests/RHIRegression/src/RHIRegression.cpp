@@ -594,6 +594,12 @@ void Run(const BackendOptions& options) {
     if (Renderer::GetAPI() == RendererAPI::API::Vulkan) {
         auto flat = Shader::Create("Packages/Shaders/FlatColor.glsl");
         flat->SetMat4("u_ViewProjection", glm::mat4(1)); flat->SetFloat4("u_Color", glm::vec4(1));
+        // Drive the embedded palette/mask post-process programs through their
+        // public entries: each resolves (and therefore compiles) its program,
+        // then safely rejects these invalid arguments without drawing.
+        const glm::vec4 palette[4] = {{1,0,0,1},{0,1,0,1},{0,0,1,1},{1,1,0,1}};
+        RenderCommand::ApplyPaletteSwap(palette, palette, std::nanf(""));
+        RenderCommand::ApplyMaskTransition(nullptr, 1.0f, glm::vec4(0,0,0,1));
     }
     // Exercise the optimized offline artifact path, including named uniform
     // reflection and different uniform snapshots in the same submission.

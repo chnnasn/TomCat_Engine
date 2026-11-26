@@ -509,6 +509,42 @@ namespace TomCat {
 		C_Camera(const C_Camera&) = default;
 	};
 
+	// Runtime full-screen post-processing for the camera entity it is attached
+	// to. The chain runs after scene rendering and before gameplay UI, in a
+	// fixed order: the camera's built-in ColorGrade, then PaletteSwap, then
+	// MaskTransition. Kept as a separate component because Camera's legacy
+	// Scene-11 mirror comparison requires its payload to stay byte-compatible,
+	// while a new component has no legacy readers to keep in sync.
+	struct PostProcess2D
+	{
+		bool Enabled = true;
+
+		// Exact palette swap: a screen pixel is repainted only when it matches
+		// one of the four source colors within MatchThreshold; every other
+		// color passes through untouched.
+		bool PaletteSwapEnabled = false;
+		glm::vec4 PaletteOldDark{ 0.078f, 0.125f, 0.173f, 1.0f };
+		glm::vec4 PaletteOldLight{ 0.816f, 0.824f, 0.836f, 1.0f };
+		glm::vec4 PaletteOldPrimary{ 0.373f, 0.549f, 0.376f, 1.0f };
+		glm::vec4 PaletteOldSecondary{ 0.686f, 0.506f, 0.251f, 1.0f };
+		glm::vec4 PaletteNewDark{ 0.078f, 0.125f, 0.173f, 1.0f };
+		glm::vec4 PaletteNewLight{ 0.816f, 0.824f, 0.836f, 1.0f };
+		glm::vec4 PaletteNewPrimary{ 0.373f, 0.549f, 0.376f, 1.0f };
+		glm::vec4 PaletteNewSecondary{ 0.686f, 0.506f, 0.251f, 1.0f };
+		float PaletteMatchThreshold = 0.05f;
+
+		// Iris-style mask transition. Progress 0 leaves the image untouched and
+		// 1 covers every pixel with MaskColor; the mask texture selects which
+		// pixels survive at a given progress (mask alpha compared against it).
+		bool MaskEnabled = false;
+		float MaskProgress = 0.0f;
+		glm::vec4 MaskColor{ 0.0f, 0.0f, 0.0f, 1.0f };
+		AssetHandle MaskSprite = AssetHandle(0);
+
+		PostProcess2D() = default;
+		PostProcess2D(const PostProcess2D&) = default;
+	};
+
 	// Authoring/serialization state only. CLR instances and handles are owned by
 	// ScriptEngine and must never enter the ECS registry.
 	struct CSharpScriptEntry

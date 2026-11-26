@@ -580,6 +580,29 @@
         { "name": "Restitution", "propertyId": "1504", "kind": "Float" },
         { "name": "RestitutionThreshold", "propertyId": "1505", "kind": "Float" }
       ]
+    },
+    {
+      "managedType": "PostProcess2D",
+      "stableName": "TomCat.PostProcess2D",
+      "typeId": "0x9f0000000000001a",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "1600", "kind": "Bool" },
+        { "name": "PaletteSwapEnabled", "propertyId": "1601", "kind": "Bool" },
+        { "name": "PaletteOldDark", "propertyId": "1602", "kind": "Color" },
+        { "name": "PaletteOldLight", "propertyId": "1603", "kind": "Color" },
+        { "name": "PaletteOldPrimary", "propertyId": "1604", "kind": "Color" },
+        { "name": "PaletteOldSecondary", "propertyId": "1605", "kind": "Color" },
+        { "name": "PaletteNewDark", "propertyId": "1606", "kind": "Color" },
+        { "name": "PaletteNewLight", "propertyId": "1607", "kind": "Color" },
+        { "name": "PaletteNewPrimary", "propertyId": "1608", "kind": "Color" },
+        { "name": "PaletteNewSecondary", "propertyId": "1609", "kind": "Color" },
+        { "name": "PaletteMatchThreshold", "propertyId": "1610", "kind": "Float" },
+        { "name": "MaskEnabled", "propertyId": "1611", "kind": "Bool" },
+        { "name": "MaskProgress", "propertyId": "1612", "kind": "Float" },
+        { "name": "MaskColor", "propertyId": "1613", "kind": "Color" },
+        { "name": "MaskSprite", "propertyId": "1614", "kind": "UInt64", "conversion": "AssetRef", "managedType": "AssetRef<Texture2DAsset>" }
+      ]
     }
   ]
 }

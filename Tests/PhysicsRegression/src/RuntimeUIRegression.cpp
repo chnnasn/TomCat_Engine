@@ -2024,6 +2024,7 @@ AAEAAAAKAIAAAwAgT1MvMkTfRfMAAAEoAAAAYGNtYXAAHuy0AAABkAAAAFBnbHlmMSMU6AAAAegAAABk
         RequireUI(glGetError()==GL_NO_ERROR,"postprocess GL state error");
         target->Unbind(); Renderer2D::Set2DLighting({1,1,1},{});
         OpenGLColorGradeRegression::Run();
+        OpenGLColorGradeRegression::RunPaletteAndMaskPasses();
         OpenGLClearRegression::Run();
     }
 

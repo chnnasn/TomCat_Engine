@@ -403,6 +403,11 @@ namespace TomCat {
 						"TomCat.TilemapRenderer2D", "Material", entityPath,
 						AssetType::Material, SerializedAssetReferenceKind::Material,
 						visitor, errorMessage)
+					|| !VisitRegisteredAssetProperty(registeredComponents,
+						"TomCat.PostProcess2D", "MaskSprite", entityPath,
+						AssetType::Texture2D,
+						SerializedAssetReferenceKind::PostProcessMask,
+						visitor, errorMessage)
 					|| !VisitTilemapCells(registeredComponents, entityPath, visitor,
 						errorMessage))
 					return false;

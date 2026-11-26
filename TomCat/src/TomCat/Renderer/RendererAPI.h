@@ -2,6 +2,7 @@
 
 #include "glm/glm.hpp"
 #include "VertexArray.h"
+#include "Texture.h"
 
 namespace TomCat {
 
@@ -12,7 +13,7 @@ namespace TomCat {
 		virtual void RestoreTarget() = 0;
 	};
 
-	class RendererAPI 
+	class RendererAPI
 	{
 	public:
 		virtual ~RendererAPI() = default;
@@ -25,7 +26,19 @@ namespace TomCat {
 		};
 	public:
 		virtual void Init() = 0;
+        // Full-screen post-process passes. Each one copies the current draw
+        // target into a private texture, filters it with an embedded engine
+        // shader, and draws the result back; UI rendered afterwards is never
+        // affected. All passes early out on their neutral parameters.
         virtual void ApplyColorGrade(float exposure, float saturation, float vignette) = 0;
+        // Exact four-pair palette swap; source sampling must stay NEAREST so
+        // neighboring colors are not interpolated before the match.
+        virtual void ApplyPaletteSwap(const glm::vec4 (&oldColors)[4],
+            const glm::vec4 (&newColors)[4], float threshold) = 0;
+        // Iris transition: pixels whose mask alpha is below progress are
+        // covered with coverColor. A null mask covers the whole target.
+        virtual void ApplyMaskTransition(const Ref<Texture2D>& mask, float progress,
+            const glm::vec4& coverColor) = 0;
         virtual void ReleaseColorGrade() = 0;
 
 		virtual void SetViewport(uint32_t x, uint32_t y, uint32_t width, uint32_t height) = 0;

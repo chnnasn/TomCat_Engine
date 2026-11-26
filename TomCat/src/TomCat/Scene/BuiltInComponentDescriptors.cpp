@@ -2310,6 +2310,66 @@ namespace TomCat {
 			return descriptor;
 		}
 
+		ComponentDescriptor MakePostProcess2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<PostProcess2D>(
+				ComponentIds::PostProcess2D, "TomCat.PostProcess2D",
+				"Post Process 2D");
+			descriptor.UseGenericInspector = true;
+			// Script-accessible so level scripts can switch the palette colors
+			// and drive mask progress through the generated managed proxy.
+			descriptor.ScriptAccessible = true;
+			auto maskSprite = AssetProperty(ComponentIds::PostProcess2DProperties::MaskSprite,
+				"MaskSprite", AssetType::Texture2D, [](Entity entity) -> AssetHandle&
+				{ return entity.GetComponent<PostProcess2D>().MaskSprite; });
+			descriptor.Properties = {
+				BoolProperty<PostProcess2D>(ComponentIds::PostProcess2DProperties::Enabled,
+					"Enabled", &PostProcess2D::Enabled),
+				BoolProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteSwapEnabled,
+					"PaletteSwapEnabled", &PostProcess2D::PaletteSwapEnabled),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteOldDark,
+					"PaletteOldDark", &PostProcess2D::PaletteOldDark),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteOldLight,
+					"PaletteOldLight", &PostProcess2D::PaletteOldLight),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteOldPrimary,
+					"PaletteOldPrimary", &PostProcess2D::PaletteOldPrimary),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteOldSecondary,
+					"PaletteOldSecondary", &PostProcess2D::PaletteOldSecondary),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteNewDark,
+					"PaletteNewDark", &PostProcess2D::PaletteNewDark),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteNewLight,
+					"PaletteNewLight", &PostProcess2D::PaletteNewLight),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteNewPrimary,
+					"PaletteNewPrimary", &PostProcess2D::PaletteNewPrimary),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteNewSecondary,
+					"PaletteNewSecondary", &PostProcess2D::PaletteNewSecondary),
+				FloatProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::PaletteMatchThreshold,
+					"PaletteMatchThreshold", &PostProcess2D::PaletteMatchThreshold,
+					0.0f, 1.0f),
+				BoolProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::MaskEnabled,
+					"MaskEnabled", &PostProcess2D::MaskEnabled),
+				FloatProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::MaskProgress,
+					"MaskProgress", &PostProcess2D::MaskProgress, 0.0f, 1.0f),
+				ColorProperty<PostProcess2D>(
+					ComponentIds::PostProcess2DProperties::MaskColor,
+					"MaskColor", &PostProcess2D::MaskColor),
+				std::move(maskSprite)
+			};
+			return descriptor;
+		}
+
 		ComponentDescriptor MakeParticleSystem2DDescriptor()
 		{
 			auto descriptor = BaseDescriptor<ParticleSystem2D>(
@@ -2449,6 +2509,7 @@ namespace TomCat {
 		result.emplace_back(MakeGrid2DDescriptor());
 		result.emplace_back(MakeTilemapRenderer2DDescriptor());
 		result.emplace_back(MakeTilemapCollider2DDescriptor());
+		result.emplace_back(MakePostProcess2DDescriptor());
 		return result;
 	}
 
