@@ -4705,9 +4705,6 @@ namespace TomCat {
 			Renderer2D::EndScene();
 			RenderCommand::SetDepthLessEqual(false);
 			Renderer2D::SetPixelSnap(0.0f);
-			if (pixelFrame.Valid)
-				DrawPixelPerfectLetterbox(pixelFrame,
-					mainCameraEntity.GetComponent<PixelPerfectCamera2D>().LetterboxColor);
 			RenderCommand::ApplyColorGrade(camera.Exposure,camera.Saturation,camera.Vignette);
 			// PostProcess2D extends the camera's built-in grade with engine
 			// built-in full-screen passes. The fixed order is grade, palette
@@ -4747,6 +4744,17 @@ namespace TomCat {
 							postProcess.MaskProgress, postProcess.MaskColor, postProcess.RotatingIris);
 					}
 				}
+			}
+			// Composite viewport bars over scene depth and after all world color effects.
+			if (pixelFrame.Valid && (pixelFrame.ContentWidth < m_ViewportWidth
+				|| pixelFrame.ContentHeight < m_ViewportHeight))
+			{
+				RenderCommand::SetDepthTest(false);
+				RenderCommand::SetDepthWrite(false);
+				DrawPixelPerfectLetterbox(pixelFrame,
+					mainCameraEntity.GetComponent<PixelPerfectCamera2D>().LetterboxColor);
+				RenderCommand::SetDepthWrite(true);
+				RenderCommand::SetDepthTest(true);
 			}
 		}
 		RuntimeUISystem::RenderScreen(*this, m_Registry, m_ViewportWidth,
