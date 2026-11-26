@@ -227,6 +227,13 @@ namespace {
 		{
 			std::ostream& stream = value.Level ==
 				TomCat::ScriptCompilerDiagnostic::Severity::Error ? std::cerr : std::cout;
+			if (!value.File.empty())
+			{
+				stream << value.File.string();
+				if (value.Line > 0)
+					stream << '(' << value.Line << ", " << value.Column << ')';
+				stream << ": ";
+			}
 			stream << (value.Code.empty() ? "C#" : value.Code) << ": "
 				<< value.Message << '\n';
 		});
