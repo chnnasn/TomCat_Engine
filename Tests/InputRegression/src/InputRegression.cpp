@@ -791,6 +791,72 @@ static void TestAutomationInputIsolation()
     Require(!Input::IsKeyPressed(KeyCode(65)), "clear left stale physical snapshot");
 }
 
+	void TestSyntheticKeysSurviveFocusLoss()
+	{
+		using Queue = TomCat::InputEventQueue;
+		TomCat::Input::ClearState();
+		constexpr uint32_t key = 68; // D
+		constexpr uint32_t physical = 65; // A
+
+		// A held synthetic key is visible from the next frame, without focus.
+		TomCat::Input::NotifyWindowFocus(false, 1.0);
+		Require(TomCat::Input::InjectKey(key, true),
+			"InjectKey rejected a valid key while unfocused");
+		TomCat::Input::NotifyKey(physical, Queue::Action::Pressed, 1.1);
+		TomCat::Input::BeginFrame();
+		const auto& unfocused = TomCat::Input::GetFrameSnapshot();
+		Require(unfocused.WasPressed(Queue::Device::Keyboard, key)
+			&& unfocused.IsHeld(Queue::Device::Keyboard, key),
+			"Synthetic press must arrive while the window is unfocused");
+		Require(!unfocused.IsHeld(Queue::Device::Keyboard, physical),
+			"Physical presses must still be ignored without focus");
+
+		// Focus round trips release physical keys but keep synthetic ones.
+		TomCat::Input::NotifyWindowFocus(true, 2.0);
+		TomCat::Input::NotifyKey(physical, Queue::Action::Pressed, 2.1);
+		TomCat::Input::BeginFrame();
+		TomCat::Input::NotifyWindowFocus(false, 3.0);
+		TomCat::Input::BeginFrame();
+		const auto& refocused = TomCat::Input::GetFrameSnapshot();
+		Require(refocused.WasReleased(Queue::Device::Keyboard, physical)
+			&& !refocused.IsHeld(Queue::Device::Keyboard, physical),
+			"Focus loss must still release physical keys");
+		Require(refocused.IsHeld(Queue::Device::Keyboard, key)
+			&& !refocused.WasReleased(Queue::Device::Keyboard, key)
+			&& TomCat::Input::IsKeyInjected(key),
+			"Focus loss must not release a synthetic key");
+
+		TomCat::Input::ReleaseInjectedKeys();
+		TomCat::Input::BeginFrame();
+		Require(TomCat::Input::GetFrameSnapshot().WasReleased(Queue::Device::Keyboard, key)
+			&& !TomCat::Input::IsKeyInjected(key),
+			"ReleaseInjectedKeys must release held synthetic keys");
+
+		// A tap held for two frames: pressed+held, held, then released.
+		Require(TomCat::Input::InjectKeyTap(key, 2), "InjectKeyTap rejected 2 frames");
+		TomCat::Input::BeginFrame();
+		const auto& first = TomCat::Input::GetFrameSnapshot();
+		Require(first.WasPressed(Queue::Device::Keyboard, key)
+			&& first.IsHeld(Queue::Device::Keyboard, key),
+			"Tap frame 1 must be a press that reads held");
+		TomCat::Input::BeginFrame();
+		const auto& second = TomCat::Input::GetFrameSnapshot();
+		Require(!second.WasPressed(Queue::Device::Keyboard, key)
+			&& second.IsHeld(Queue::Device::Keyboard, key),
+			"Tap frame 2 must still read held");
+		TomCat::Input::BeginFrame();
+		const auto& third = TomCat::Input::GetFrameSnapshot();
+		Require(third.WasReleased(Queue::Device::Keyboard, key)
+			&& !third.IsHeld(Queue::Device::Keyboard, key),
+			"Tap must release after its hold frames");
+
+		Require(!TomCat::Input::InjectKey(Queue::KeyCount, true)
+			&& !TomCat::Input::InjectKeyTap(key, 0)
+			&& !TomCat::Input::InjectKeyTap(key, 3601),
+			"Invalid synthetic key arguments must be rejected");
+		TomCat::Input::ClearState();
+	}
+
 int main()
 {
 	try
@@ -798,6 +864,7 @@ int main()
         TestAutomationInputIsolation();
 		TestOrderedQueuePreservesFastTap();
 		TestFocusLossSynthesizesOrderedReleases();
+		TestSyntheticKeysSurviveFocusLoss();
 		TestBoundedQueuePreservesDroppedEdgeSummary();
 		TestGamepadHotPlugEntryPointPreservesOrderedEdges();
 		TestManagedUpdateAndFixedConsumption();

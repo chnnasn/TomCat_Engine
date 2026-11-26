@@ -134,13 +134,16 @@ namespace TomCat {
 
 		// Focus loss must not leave a held key/button latched. Synthetic releases
 		// retain normal sequence ordering and the focus callback's timestamp.
-		void ReleaseAll(double timestamp)
+		// keepKeys marks keys held by synthetic input (Input::InjectKey); they
+		// are independent of window focus and stay held.
+		void ReleaseAll(double timestamp,
+			const std::array<bool, KeyCount>* keepKeys = nullptr)
 		{
 			if (!std::isfinite(timestamp))
 				return;
 			for (uint32_t key = 0; key < KeyCount; ++key)
 			{
-				if (m_LiveKeysHeld[key])
+				if (m_LiveKeysHeld[key] && !(keepKeys && (*keepKeys)[key]))
 					Push(Device::Keyboard, key, Action::Released, timestamp);
 			}
 			for (uint32_t button = 0; button < MouseButtonCount; ++button)

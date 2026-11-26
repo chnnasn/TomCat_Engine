@@ -51,6 +51,18 @@ namespace TomCat {
 		static const InputEventQueue::FrameSnapshot& GetFrameSnapshot();
 		static void ClearState();
 
+		// Synthetic keyboard input for tests and tooling. Unlike NotifyKey it is
+		// accepted without window focus, and focus loss does not release keys it
+		// holds. Transitions join the pending queue, so they become visible at
+		// the next BeginFrame like real input. InjectKeyTap presses now and
+		// releases after holdFrames BeginFrame boundaries (minimum 1), so the
+		// key reads as held for that many frames. Returns false for an invalid
+		// key or hold count. Main-thread only.
+		static bool InjectKey(uint32_t key, bool pressed);
+		static bool InjectKeyTap(uint32_t key, uint32_t holdFrames = 1);
+		static void ReleaseInjectedKeys();
+		static bool IsKeyInjected(uint32_t key);
+
 		// Platform callbacks append ordered transitions while PollEvents runs.
 		static void NotifyKey(uint32_t key, InputEventQueue::Action action,
 			double timestamp);

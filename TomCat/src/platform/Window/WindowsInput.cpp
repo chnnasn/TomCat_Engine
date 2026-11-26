@@ -40,6 +40,16 @@ namespace TomCat {
 		bool s_FrameWindowFocused = true;
 		std::array<Input::GamepadSnapshot, Input::MaximumGamepads> s_FrameGamepads{};
 		std::array<bool, Input::MaximumGamepads> s_ReportedGamepadConnections{};
+		// Keys currently held by InjectKey/InjectKeyTap, and for taps the number
+		// of BeginFrame boundaries left before the automatic release.
+		std::array<bool, InputEventQueue::KeyCount> s_InjectedKeys{};
+		std::array<uint32_t, InputEventQueue::KeyCount> s_InjectedTapFrames{};
+
+		double InjectionTimestamp()
+		{
+			Application* application = Application::TryGet();
+			return application && application->HasWindow() ? glfwGetTime() : 0.0;
+		}
 
 		Input::GamepadSnapshot PollGamepad(uint32_t index)
 		{
@@ -155,6 +165,43 @@ namespace TomCat {
 		return index < MaximumGamepads ? s_FrameGamepads[index] : GamepadSnapshot{};
 	}
 
+	bool Input::InjectKey(uint32_t key, bool pressed)
+	{
+		if (key >= InputEventQueue::KeyCount)
+			return false;
+		s_InjectedTapFrames[key] = 0;
+		if (s_InjectedKeys[key] == pressed)
+			return true;
+		s_InjectedKeys[key] = pressed;
+		return s_EventQueue.Push(InputEventQueue::Device::Keyboard, key,
+			pressed ? InputEventQueue::Action::Pressed
+				: InputEventQueue::Action::Released, InjectionTimestamp());
+	}
+
+	bool Input::InjectKeyTap(uint32_t key, uint32_t holdFrames)
+	{
+		if (key >= InputEventQueue::KeyCount || holdFrames == 0 || holdFrames > 3600)
+			return false;
+		if (!InjectKey(key, true))
+			return false;
+		s_InjectedTapFrames[key] = holdFrames;
+		return true;
+	}
+
+	void Input::ReleaseInjectedKeys()
+	{
+		for (uint32_t key = 0; key < InputEventQueue::KeyCount; ++key)
+		{
+			if (s_InjectedKeys[key])
+				(void)InjectKey(key, false);
+		}
+	}
+
+	bool Input::IsKeyInjected(uint32_t key)
+	{
+		return key < InputEventQueue::KeyCount && s_InjectedKeys[key];
+	}
+
 	void Input::BeginFrame()
 	{
 #ifdef TC_PLATFORM_WEB
@@ -194,6 +241,17 @@ namespace TomCat {
 		s_EventQueue.Freeze();
         s_PhysicalSnapshot = s_EventQueue.GetSnapshot();
         s_PhysicalSnapshot.FrameNumber = ++s_InputFrameSerial;
+		// Count tap frames after the freeze: the release then lands in the next
+		// frame's queue, so the frame that observes the press also reads held.
+		for (uint32_t key = 0; key < InputEventQueue::KeyCount; ++key)
+		{
+			if (s_InjectedTapFrames[key] == 0)
+				continue;
+			if (s_InjectedTapFrames[key] == 1)
+				(void)InjectKey(key, false);
+			else
+				--s_InjectedTapFrames[key];
+		}
 		s_FrameGamepads = std::move(nextGamepads);
 		s_FrameScrollX = s_PendingScrollX;
 		s_FrameScrollY = s_PendingScrollY;
@@ -240,6 +298,8 @@ namespace TomCat {
 		s_FrameWindowFocused = true;
 		s_FrameGamepads = {};
 		s_ReportedGamepadConnections.fill(false);
+		s_InjectedKeys.fill(false);
+		s_InjectedTapFrames.fill(0);
 	}
 
 	void Input::NotifyKey(uint32_t key, InputEventQueue::Action action,
@@ -354,7 +414,7 @@ namespace TomCat {
 		{
 			s_PendingTextInput.clear();
 			s_FrameTextInput.clear();
-			s_EventQueue.ReleaseAll(timestamp);
+			s_EventQueue.ReleaseAll(timestamp, &s_InjectedKeys);
 			s_PendingScrollX = 0.0f;
 			s_PendingScrollY = 0.0f;
 		}
