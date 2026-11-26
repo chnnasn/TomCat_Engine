@@ -14,9 +14,6 @@
 
 #include "PlayerCommandLine.h"
 #include "PlayerRuntimeLayer.h"
-#ifdef TC_PLATFORM_WINDOWS
-#include "WindowsStartupVideo.h"
-#endif
 
 #include <array>
 #include <cstdlib>
@@ -218,7 +215,7 @@ namespace TomCat {
 				assets, settings.Icon, *dataPaths, iconWarning);
 			if (!iconWarning.empty())
 				TC_Core_Warn("TomCat Player: {0}", iconWarning);
-			assets.UnmountCookedPackage();
+			// Keep the verified package mounted for the runtime layer.
 
 			plan.Window = WindowProps(settings.ProductName,
 				settings.Width, settings.Height, iconPath);
@@ -234,8 +231,13 @@ namespace TomCat {
 			plan.CreateWindow = !IsHeadlessPlayerSmokeRequested();
 			// --headless keeps a real graphics context in a hidden window, so
 			// rendering and screenshots work without focus or occlusion issues.
+#ifdef _WIN32
+			// Show the interactive window once its black startup surface is ready.
+			plan.Window.Visible = false;
+#else
 			if (plan.Command.Headless)
-				plan.Window.Visible = false;
+			    plan.Window.Visible = false;
+#endif
 			if (!plan.CreateWindow && !plan.Command.ScreenshotPath.empty())
 			{
 				plan.Error = "--screenshot needs a graphics context; use --headless "
@@ -265,23 +267,6 @@ namespace TomCat {
 					Close(plan.ErrorCode);
 					return;
 				}
-				#ifdef TC_PLATFORM_WINDOWS
-				if (plan.Command.Mode == PlayerCommandMode::Run && plan.CreateWindow && !plan.Command.Headless)
-				{
-					const auto video = plan.PackagePath.parent_path() / "Startup.mp4";
-					TC_Core_Info("Playing startup video: {0}", PathToUTF8(video));
-					const auto result = PlayStartupVideo(static_cast<GLFWwindow*>(GetWindow().GetNativeWindow()), video);
-					if (result != StartupResult::Completed)
-					{
-						if (result == StartupResult::Failed)
-							MessageBoxW(nullptr, L"The startup animation could not be played. Check Startup.mp4 and Windows media support.",
-								L"Startup animation", MB_OK | MB_ICONERROR);
-						Close(result == StartupResult::Closed ? 0 : 7);
-						return;
-					}
-					TC_Core_Info("Startup video completed");
-				}
-#endif
 				const PlayerCommandLine& command = plan.Command;
 				switch (command.Mode)
 				{
@@ -310,6 +295,7 @@ namespace TomCat {
 							return path;
 						};
 						PlayerAutomationOptions automation;
+						automation.ShowStartupVideo = plan.CreateWindow && !command.Headless;
 						automation.RenderDiagnosticsPath = std::move(diagnosticsPath);
 						automation.ScreenshotPath =
 							resolveFromLaunchDirectory(command.ScreenshotPath);

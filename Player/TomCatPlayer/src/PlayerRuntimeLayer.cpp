@@ -1,6 +1,9 @@
 #include "PlayerRuntimeLayer.h"
 
 #include "PlayerCommandLine.h"
+#ifdef TC_PLATFORM_WINDOWS
+#include "WindowsStartupVideo.h"
+#endif
 #include <TomCat/Debug/FrameProfiler.h>
 
 #include <TomCat/Scripting/ManagedRuntimeFactory.h>
@@ -176,7 +179,7 @@ namespace TomCat {
 	PlayerRuntimeLayer::PlayerRuntimeLayer(std::filesystem::path packagePath,
 		uint32_t viewportWidth, uint32_t viewportHeight,
 		PlayerAutomationOptions automation)
-		: Layer("PlayerRuntimeLayer"), m_PackagePath(std::move(packagePath)),
+		: Layer("PlayerRuntimeLayer"), m_ShowStartupVideo(automation.ShowStartupVideo), m_PackagePath(std::move(packagePath)),
 		m_ViewportWidth(viewportWidth), m_ViewportHeight(viewportHeight),
 		m_RenderDiagnosticsPath(std::move(automation.RenderDiagnosticsPath)),
 		m_ScreenshotPath(std::move(automation.ScreenshotPath)),
@@ -189,38 +192,74 @@ namespace TomCat {
 		if (const char* path = std::getenv("TC_PLAYER_FRAME_TRACE"); path && *path)
 			FrameProfiler::Get().SetRecording(true);
 		AssetManager& assets = AssetManager::Get();
-		if (!assets.MountCookedPackage(m_PackagePath))
+		if (assets.GetCookedPackagePath() != m_PackagePath && !assets.MountCookedPackage(m_PackagePath))
 		{
 			Fail("could not mount cooked package '" + PathToUTF8(m_PackagePath) + "'", 4);
 			return;
 		}
+#ifdef TC_PLATFORM_WINDOWS
+		if (m_ShowStartupVideo)
+		{
+			auto* window = static_cast<GLFWwindow*>(Application::Get().GetWindow().GetNativeWindow());
+			const auto video = m_PackagePath.parent_path() / "Startup.mp4";
+			// Give the compositor a real black game frame before it displays
+			// the video. Removing the child can then never expose an empty swapchain.
+			RenderCommand::SetClearColor(glm::vec4(0, 0, 0, 1));
+			RenderCommand::Clear();
+			Application::Get().GetWindow().Present();
+			TC_Core_Info("Playing startup video: {0}", PathToUTF8(video));
+			bool prepared = false;
+			Ref<Scene> warmedScene;
+			const auto result = PlayStartupVideo(window, video, [&](bool nearEnd)
+			{
+				if (!prepared) prepared = PrepareRuntime();
+				if (!prepared) return false;
+				assets.PumpTexturePublishes(8, 32ULL * 1024 * 1024, 3.0);
+				if (nearEnd)
+				{
+					if (!m_SceneManager && !StartEntryScene()) return false;
+					const auto scene = m_SceneManager->GetActiveScene();
+					if (scene && scene != warmedScene && !m_SceneManager->HasPendingTransition())
+					{
+						// One zero-time update per scene runs startup callbacks. A
+						// bootstrap can request its title without advancing physics.
+						warmedScene = scene;
+						scene->OnUpdateRuntime(Timestep(0.0f), false);
+					}
+					if (m_SceneManager->HasPendingTransition()
+						&& !m_SceneManager->CommitPendingTransition() && !m_SceneManager->GetActiveScene())
+					{
+						Fail(m_SceneManager->GetLastError());
+						return false;
+					}
+				}
+				return true;
+			});
+			if (result != StartupResult::Completed)
+			{
+				if (result == StartupResult::Failed)
+				{
+					MessageBoxW(nullptr, L"The startup animation could not be played. Check Startup.mp4 and Windows media support.",
+						L"Startup animation", MB_OK | MB_ICONERROR);
+					Application::Get().Close(7);
+				}
+				else if (result == StartupResult::Closed) Application::Get().Close();
+				return;
+			}
+			if (!prepared && !PrepareRuntime()) return;
+			m_StartupOpacity = 1.0f;
+			TC_Core_Info("Startup video completed");
+		}
+		else
+#endif
+		if (!PrepareRuntime()) return;
+		if (!m_SceneManager) StartEntryScene();
+	}
+
+	bool PlayerRuntimeLayer::StartEntryScene()
+	{
+		auto& assets = AssetManager::Get();
 		const bool hasWindow = Application::Get().HasWindow();
-		std::string moduleError;
-		if (!ModuleSystem::Get().LoadCookedModules(assets.GetCookedModulePayload(), moduleError))
-		{ Fail("could not load packaged native modules: " + moduleError, 5); return; }
-		std::string shaderError;
-		if (hasWindow && !assets.PreloadCookedShaders(shaderError))
-		{
-			Fail("could not publish packaged shaders: " + shaderError);
-			return;
-		}
-		const size_t texturePreloadCount = hasWindow
-			? assets.BeginCookedTexturePreload() : 0;
-		if (texturePreloadCount != 0)
-			TC_Core_Info("Queued {0} packaged textures for bounded preload",
-				texturePreloadCount);
-
-		Scripting::ScriptEngine::Get().SetRuntime({});
-		std::shared_ptr<Scripting::IScriptRuntime> runtime;
-		std::string runtimeError;
-		if (!CreateMountedManagedRuntime(runtime, runtimeError))
-		{
-			Fail("could not initialize the packaged C# runtime: " + runtimeError);
-			return;
-		}
-		if (runtime)
-			Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
-
 		m_SceneManager = CreateScope<SceneManager>();
 		if (hasWindow)
 		{
@@ -238,7 +277,7 @@ namespace TomCat {
 		{
 			Fail("could not start the entry Scene runtime: "
 				+ m_SceneManager->GetLastError());
-			return;
+			return false;
 		}
 		if (!m_RenderDiagnosticsPath.empty())
 		{
@@ -250,6 +289,40 @@ namespace TomCat {
 		TC_Core_Info("TomCat Player started '{0}' (entry Scene {1})",
 			PathToUTF8(assets.GetCookedPackagePath()),
 			static_cast<uint64_t>(entryScene));
+		return true;
+	}
+
+	bool PlayerRuntimeLayer::PrepareRuntime()
+	{
+		auto& assets = AssetManager::Get();
+		const bool hasWindow = Application::Get().HasWindow();
+		std::string moduleError;
+		if (!ModuleSystem::Get().LoadCookedModules(assets.GetCookedModulePayload(), moduleError))
+		{ Fail("could not load packaged native modules: " + moduleError, 5); return false; }
+		std::string shaderError;
+		if (hasWindow && !assets.PreloadCookedShaders(shaderError))
+		{
+			Fail("could not publish packaged shaders: " + shaderError);
+			return false;
+		}
+		const size_t texturePreloadCount = hasWindow
+			? assets.BeginCookedTexturePreload() : 0;
+		if (texturePreloadCount != 0)
+			TC_Core_Info("Queued {0} packaged textures for bounded preload",
+				texturePreloadCount);
+
+		Scripting::ScriptEngine::Get().SetRuntime({});
+		std::shared_ptr<Scripting::IScriptRuntime> runtime;
+		std::string runtimeError;
+		if (!CreateMountedManagedRuntime(runtime, runtimeError))
+		{
+			Fail("could not initialize the packaged C# runtime: " + runtimeError);
+			return false;
+		}
+		if (runtime)
+			Scripting::ScriptEngine::Get().SetRuntime(std::move(runtime));
+
+		return true;
 	}
 
 	void PlayerRuntimeLayer::OnDetach()
@@ -284,10 +357,30 @@ namespace TomCat {
 		{
 			UpdatePresentation(Application::Get().GetWindow());
 		}
-		if (const Ref<Scene> scene = m_SceneManager->GetActiveScene())
-			{
+		const Ref<Scene> renderedScene = m_SceneManager->GetActiveScene();
+		if (const Ref<Scene>& scene = renderedScene)
+		{
             if (m_PresentationTarget) m_PresentationTarget->Bind();
             scene->OnUpdateRuntime(timestep, hasWindow);
+#ifdef TC_PLATFORM_WINDOWS
+			if (m_StartupOpacity > 0.0f)
+			{
+				if (m_StartupFrameReady)
+				{
+					const double now = glfwGetTime();
+					const float step = m_LastRevealTime > 0.0 ? static_cast<float>(std::clamp(now - m_LastRevealTime, 0.0, 1.0 / 30.0)) : 0.0f;
+					m_LastRevealTime = now;
+					m_StartupOpacity = std::max(0.0f, m_StartupOpacity - step / 0.4f);
+				}
+				auto state = RenderCommand::CaptureState();
+				RenderCommand::SetDepthTest(false);
+				RenderCommand::SetDepthWrite(false);
+				RenderCommand::SetBlending(true);
+				Renderer2D::BeginScene(RenderCameraView{});
+				Renderer2D::DrawQuad(glm::vec2(0), glm::vec2(2), glm::vec4(0, 0, 0, m_StartupOpacity));
+				Renderer2D::EndScene();
+			}
+#endif
             if (m_PresentationTarget)
                 m_PresentationTarget->PresentToWindow(m_PresentX, m_PresentY, m_PresentWidth, m_PresentHeight);
         }
@@ -319,6 +412,14 @@ namespace TomCat {
 			&& !m_SceneManager->GetActiveScene())
 			Fail("Scene transition failed without a recoverable active Scene: "
 				+ m_SceneManager->GetLastError());
+#ifdef TC_PLATFORM_WINDOWS
+		if (m_StartupOpacity > 0.0f)
+		{
+			const auto stream = AssetManager::Get().GetTextureStreamingStats();
+			m_StartupFrameReady = renderedScene && renderedScene == m_SceneManager->GetActiveScene()
+				&& !m_SceneManager->HasPendingTransition() && !stream.BacklogCount && !stream.PendingCount && !stream.PreparedCount && !stream.JobsInFlight;
+		}
+#endif
 	}
 
 	void PlayerRuntimeLayer::OnEvent(Event& event)

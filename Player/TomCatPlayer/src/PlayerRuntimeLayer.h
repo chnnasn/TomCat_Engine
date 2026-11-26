@@ -20,6 +20,7 @@ namespace TomCat {
 		std::filesystem::path ScreenshotPath;
 		// 0 runs until the game quits.
 		uint32_t Frames = 0;
+		bool ShowStartupVideo = false;
 	};
 
 	class PlayerRuntimeLayer final : public Layer
@@ -35,6 +36,14 @@ namespace TomCat {
 		void OnEvent(Event& event) override;
 
 	private:
+		bool PrepareRuntime();
+		bool StartEntryScene();
+		bool m_ShowStartupVideo = false;
+#ifdef TC_PLATFORM_WINDOWS
+		bool m_StartupFrameReady = false;
+		float m_StartupOpacity = 0.0f;
+		double m_LastRevealTime = 0.0;
+#endif
 		void UpdatePresentation(Window& window);
         Ref<Framebuffer> m_PresentationTarget;
         uint32_t m_PresentX = 0, m_PresentY = 0, m_PresentWidth = 0, m_PresentHeight = 0;
