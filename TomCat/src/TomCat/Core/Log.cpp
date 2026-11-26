@@ -125,3 +125,24 @@ namespace TomCat {
 	}
 
 }
+
+// Compile-time self tests for the log format checks in Log.h.
+namespace TomCat::Detail {
+	static_assert(HasPrintfConversion("loaded %s"));
+	static_assert(HasPrintfConversion("%d items"));
+	static_assert(HasPrintfConversion("ratio %.2f"));
+	static_assert(HasPrintfConversion("size %zu bytes"));
+	static_assert(HasPrintfConversion("%-8s|"));
+	static_assert(!HasPrintfConversion("50% done"));
+	static_assert(!HasPrintfConversion("100%"));
+	static_assert(!HasPrintfConversion("%% literal"));
+	static_assert(!HasPrintfConversion("%LOCALAPPDATA%\TomCat"));
+	static_assert(!HasPrintfConversion("%APPDATA% and %Logs% and %systemroot%"));
+	static_assert(!HasPrintfConversion("loaded {0}"));
+	static_assert(ReferencedArgumentCount("") == 0);
+	static_assert(ReferencedArgumentCount("{} and {}") == 2);
+	static_assert(ReferencedArgumentCount("{1} then {0}") == 2);
+	static_assert(ReferencedArgumentCount("{0} {0} {0}") == 1);
+	static_assert(ReferencedArgumentCount("{{literal}} {}") == 1);
+	static_assert(ReferencedArgumentCount("{0:.2} {1:>8}") == 2);
+}
