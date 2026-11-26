@@ -131,7 +131,8 @@ namespace TomCat {
 			Box,
 			Eyedropper,
 			Erase,
-			Fill
+			Fill,
+			Collision
 		};
 
 		struct TilePaletteState
@@ -142,6 +143,7 @@ namespace TomCat {
 			glm::ivec2 MoveDestination{ 0, 0 };
 			AssetHandle SpriteHandle = AssetHandle(0);
 			glm::vec4 Tint{ 1.0f };
+			TilemapCollisionMode2D Collision = TilemapCollisionMode2D::None;
 		};
 
 		struct AnimationClipAssetEditorState

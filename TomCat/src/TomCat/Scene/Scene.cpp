@@ -414,6 +414,102 @@ namespace TomCat {
 			HashPhysicsValue(hash, std::bit_cast<uint32_t>(value));
 		}
 
+		// Body-local, entity-scale-baked geometry of one merged tilemap rect.
+		struct TilemapFixtureGeometry
+		{
+			glm::vec2 Center{ 0.0f };
+			glm::vec2 HalfExtent{ 0.0f };
+		};
+
+		// Everything the fixture generation and the definition signature need,
+		// computed once per tilemap collider so both paths agree by construction.
+		struct TilemapCollisionPlan
+		{
+			bool WantsCollision = false;
+			bool SupportedLayout = false;
+			bool ValidParameters = false;
+			uint64_t Signature = 0;
+			// Empty when the plan wants collision but the layout cannot merge.
+			std::vector<TilemapFixtureGeometry> Fixtures;
+		};
+
+		TilemapCollisionPlan PlanTilemapCollision(const Tilemap2D& tilemap,
+			const TilemapCollider2D& collider, const Grid2D* grid,
+			const Transform& transform, uint8_t entityLayer)
+		{
+			TilemapCollisionPlan plan;
+			plan.WantsCollision = collider.Enabled;
+			if (!plan.WantsCollision)
+				return plan;
+			plan.SupportedLayout = Tilemap2DRuntime::SupportsCollisionMerging(grid);
+			const glm::vec2 stride = grid
+				? grid->CellSize + grid->CellGap
+				: tilemap.CellSize + tilemap.CellGap;
+			plan.ValidParameters = std::isfinite(transform._Scale.x)
+				&& std::isfinite(transform._Scale.y)
+				&& std::isfinite(stride.x) && std::isfinite(stride.y)
+				&& stride.x > 0.0f && stride.y > 0.0f
+				&& collider.CollisionLayer != 0
+				&& IsValidPhysicsMaterial(1.0f, collider.Friction,
+					collider.Restitution)
+				&& std::isfinite(collider.RestitutionThreshold)
+				&& collider.RestitutionThreshold >= 0.0f;
+			if (!plan.SupportedLayout || !plan.ValidParameters)
+				return plan;
+
+			const std::vector<Tilemap2DRuntime::CollisionRect2D> rects =
+				Tilemap2DRuntime::GenerateCollisionRects(tilemap, grid);
+			plan.Signature = 1469598103934665603ull;
+			HashPhysicsValue(plan.Signature, entityLayer);
+			HashPhysicsValue(plan.Signature, collider.CollisionLayer);
+			HashPhysicsValue(plan.Signature, collider.CollisionMask);
+			HashPhysicsFloat(plan.Signature, collider.Friction);
+			HashPhysicsFloat(plan.Signature, collider.Restitution);
+			HashPhysicsFloat(plan.Signature, collider.RestitutionThreshold);
+			HashPhysicsFloat(plan.Signature, transform._Scale.x);
+			HashPhysicsFloat(plan.Signature, transform._Scale.y);
+			HashPhysicsFloat(plan.Signature, stride.x);
+			HashPhysicsFloat(plan.Signature, stride.y);
+			HashPhysicsValue(plan.Signature, rects.size());
+			plan.Fixtures.reserve(rects.size());
+			for (const Tilemap2DRuntime::CollisionRect2D& rect : rects)
+			{
+				// A row of cells spans a continuous wall: the merged rect is
+				// CellCount * stride wide and centered between the end cells,
+				// so CellGap is bridged instead of leaving seams.
+				TilemapFixtureGeometry geometry;
+				geometry.Center.x = (rect.Min.x + rect.Max.x) * 0.5f
+					* stride.x * transform._Scale.x;
+				geometry.Center.y = (rect.Min.y + rect.Max.y) * 0.5f
+					* stride.y * transform._Scale.y;
+				geometry.HalfExtent.x = (rect.Max.x - rect.Min.x + 1) * 0.5f
+					* stride.x * std::abs(transform._Scale.x);
+				geometry.HalfExtent.y = (rect.Max.y - rect.Min.y + 1) * 0.5f
+					* stride.y * std::abs(transform._Scale.y);
+				const bool rectValid = std::isfinite(geometry.Center.x)
+					&& std::isfinite(geometry.Center.y)
+					&& std::isfinite(geometry.HalfExtent.x)
+					&& std::isfinite(geometry.HalfExtent.y)
+					&& geometry.HalfExtent.x > b2_epsilon
+					&& geometry.HalfExtent.y > b2_epsilon;
+				if (!rectValid)
+				{
+					plan.Fixtures.clear();
+					return plan;
+				}
+				HashPhysicsValue(plan.Signature,
+					static_cast<uint64_t>(static_cast<uint32_t>(rect.Min.x)));
+				HashPhysicsValue(plan.Signature,
+					static_cast<uint64_t>(static_cast<uint32_t>(rect.Min.y)));
+				HashPhysicsValue(plan.Signature,
+					static_cast<uint64_t>(static_cast<uint32_t>(rect.Max.x)));
+				HashPhysicsValue(plan.Signature,
+					static_cast<uint64_t>(static_cast<uint32_t>(rect.Max.y)));
+				plan.Fixtures.push_back(geometry);
+			}
+			return plan;
+		}
+
 		struct RuntimeBodyState
 		{
 			b2Vec2 Position{ 0.0f, 0.0f };
@@ -2562,6 +2658,18 @@ namespace TomCat {
 		return bodyIt == m_RuntimeBodies.end() ? nullptr : bodyIt->second;
 	}
 
+	const Grid2D* Scene::FindTilemapGrid2D(UUID entityID) const
+	{
+		auto parentIt = m_ParentMap.find(entityID);
+		if (parentIt == m_ParentMap.end())
+			return nullptr;
+		auto mapIt = m_EntityMap.find(parentIt->second);
+		if (mapIt == m_EntityMap.end() || !m_Registry.valid(mapIt->second)
+			|| !m_Registry.all_of<Grid2D>(mapIt->second))
+			return nullptr;
+		return &m_Registry.get<Grid2D>(mapIt->second);
+	}
+
 	uint64_t Scene::ComputeRuntimePhysicsDefinitionHash() const
 	{
 		uint64_t hash = 1469598103934665603ull;
@@ -2743,7 +2851,12 @@ namespace TomCat {
 					&& m_Registry.get<BoxCollider2D>(handle).Enabled)
 				|| (m_Registry.all_of<CircleCollider2D>(handle)
 					&& m_Registry.get<CircleCollider2D>(handle).Enabled);
-			if (rigidbodyEnabled || (!hasRigidbody && colliderEnabled))
+			const bool tilemapCollisionEnabled =
+				m_Registry.all_of<Tilemap2D, TilemapCollider2D>(handle)
+				&& m_Registry.get<TilemapCollider2D>(handle).Enabled;
+			if (rigidbodyEnabled
+				|| (!hasRigidbody
+					&& (colliderEnabled || tilemapCollisionEnabled)))
 				requiredBodies.insert(uuid);
 		}
 
@@ -2869,6 +2982,17 @@ namespace TomCat {
 					HashPhysicsFloat(hash, collider.Restitution);
 					definitions.CircleFixtures.emplace(uuid, hash);
 				}
+			}
+
+			if (m_Registry.all_of<Tilemap2D, TilemapCollider2D>(handle))
+			{
+				const auto& collider =
+					m_Registry.get<TilemapCollider2D>(handle);
+				const auto& tilemap = m_Registry.get<Tilemap2D>(handle);
+				const TilemapCollisionPlan plan = PlanTilemapCollision(tilemap,
+					collider, FindTilemapGrid2D(uuid), transform, entityLayer);
+				if (!plan.Fixtures.empty())
+					definitions.TilemapFixtures.emplace(uuid, plan.Signature);
 			}
 		}
 
@@ -3014,6 +3138,13 @@ namespace TomCat {
 				+= m_RuntimeBoxFixtures.size();
 			m_RuntimePhysicsSyncStatistics.CircleFixturesDestroyed
 				+= m_RuntimeCircleFixtures.size();
+			{
+				uint64_t tilemapFixtures = 0;
+				for (const auto& [uuid, fixtures] : m_RuntimeTilemapFixtures)
+					tilemapFixtures += fixtures.size();
+				m_RuntimePhysicsSyncStatistics.TilemapFixturesDestroyed
+					+= tilemapFixtures;
+			}
 			m_RuntimePhysicsSyncStatistics.DistanceJointsDestroyed
 				+= m_RuntimeDistanceJoints.size();
 			m_PhysicsWorld->SetContactListener(nullptr);
@@ -3024,6 +3155,7 @@ namespace TomCat {
 		m_RuntimeBodies.clear();
 		m_RuntimeBoxFixtures.clear();
 		m_RuntimeCircleFixtures.clear();
+		m_RuntimeTilemapFixtures.clear();
 		m_RuntimeDistanceJoints.clear();
 		m_RuntimePhysicsPoses.clear();
 		m_PhysicsWorld = new b2World({ 0.0f, -9.8f });
@@ -3042,7 +3174,11 @@ namespace TomCat {
 				&& entity.GetComponent<BoxCollider2D>().Enabled)
 				|| (entity.HasComponent<CircleCollider2D>()
 					&& entity.GetComponent<CircleCollider2D>().Enabled);
-			if (rigidbodyEnabled || (!hasRigidbody && colliderEnabled))
+			const bool tilemapCollisionEnabled =
+				entity.HasComponent<Tilemap2D>() && entity.HasComponent<TilemapCollider2D>()
+				&& entity.GetComponent<TilemapCollider2D>().Enabled;
+			if (rigidbodyEnabled
+				|| (!hasRigidbody && (colliderEnabled || tilemapCollisionEnabled)))
 				requiredBodies.insert(uuid);
 		}
 
@@ -3221,6 +3357,65 @@ namespace TomCat {
 				else if (collider.Enabled)
 					TC_Core_Warn("Skipping invalid CircleCollider2D on entity '{0}'", entity.GetName());
 			}
+
+			if (entity.HasComponent<Tilemap2D>() && entity.HasComponent<TilemapCollider2D>())
+			{
+				auto& collider = entity.GetComponent<TilemapCollider2D>();
+				const auto& tilemap = entity.GetComponent<Tilemap2D>();
+				const uint8_t entityLayer = entity.HasComponent<EntityMetadata>()
+					? entity.GetComponent<EntityMetadata>().Layer : 0;
+				const TilemapCollisionPlan plan = PlanTilemapCollision(tilemap,
+					collider, FindTilemapGrid2D(uuid), transform, entityLayer);
+				if (!plan.WantsCollision)
+				{
+					// Disabled colliders stay quiet; merging is opt-in.
+				}
+				else if (!plan.SupportedLayout)
+				{
+					TC_Core_Warn("Tilemap Collider 2D only merges Rectangle grids; "
+						"skipping collision on entity '{0}'", entity.GetName());
+				}
+				else if (!plan.ValidParameters)
+				{
+					TC_Core_Warn("Skipping invalid Tilemap Collider 2D on entity '{0}'",
+						entity.GetName());
+				}
+				else if (!plan.Fixtures.empty())
+				{
+					if (entity.HasComponent<Rigidbody2D>()
+						&& entity.GetComponent<Rigidbody2D>().Enabled
+						&& entity.GetComponent<Rigidbody2D>().Type
+							!= Rigidbody2D::BodyType::Static)
+						TC_Core_Warn("Tilemap Collider 2D expects a static body; "
+							"merged fixtures on entity '{0}' follow its Rigidbody 2D",
+							entity.GetName());
+					std::vector<b2Fixture*> fixtures;
+					fixtures.reserve(plan.Fixtures.size());
+					for (const TilemapFixtureGeometry& geometry : plan.Fixtures)
+					{
+						b2PolygonShape shape;
+						shape.SetAsBox(geometry.HalfExtent.x, geometry.HalfExtent.y,
+							{ geometry.Center.x, geometry.Center.y }, 0.0f);
+						b2FixtureDef fixtureDef;
+						fixtureDef.shape = &shape;
+						fixtureDef.density = 0.0f;
+						fixtureDef.friction = collider.Friction;
+						fixtureDef.restitution = collider.Restitution;
+						fixtureDef.restitutionThreshold = collider.RestitutionThreshold;
+						fixtureDef.filter.categoryBits = collider.CollisionLayer;
+						fixtureDef.filter.maskBits = collider.CollisionMask;
+						b2Fixture* fixture = body->CreateFixture(&fixtureDef);
+						if (fixture)
+							fixtures.push_back(fixture);
+					}
+					if (!fixtures.empty())
+					{
+						m_RuntimePhysicsSyncStatistics.TilemapFixturesCreated
+							+= fixtures.size();
+						m_RuntimeTilemapFixtures.emplace(uuid, std::move(fixtures));
+					}
+				}
+			}
 		}
 
 		for (UUID uuid : m_EntityOrder)
@@ -3319,17 +3514,30 @@ namespace TomCat {
 			return std::any_of(pointers.begin(), pointers.end(),
 				[](const auto& entry) { return entry.second == nullptr; });
 		};
+		const auto hasNullFixtureVector = [](const auto& vectors)
+		{
+			return std::any_of(vectors.begin(), vectors.end(),
+				[](const auto& entry)
+				{
+					return entry.second.empty()
+						|| std::any_of(entry.second.begin(), entry.second.end(),
+							[](const b2Fixture* fixture) { return fixture == nullptr; });
+				});
+		};
 		const bool ownershipIsConsistent =
 			m_RuntimeBodies.size() == m_RuntimePhysicsDefinitions.Bodies.size()
 			&& m_RuntimeBoxFixtures.size()
 				== m_RuntimePhysicsDefinitions.BoxFixtures.size()
 			&& m_RuntimeCircleFixtures.size()
 				== m_RuntimePhysicsDefinitions.CircleFixtures.size()
+			&& m_RuntimeTilemapFixtures.size()
+				== m_RuntimePhysicsDefinitions.TilemapFixtures.size()
 			&& m_RuntimeDistanceJoints.size()
 				== m_RuntimePhysicsDefinitions.DistanceJoints.size()
 			&& !hasNullPointer(m_RuntimeBodies)
 			&& !hasNullPointer(m_RuntimeBoxFixtures)
 			&& !hasNullPointer(m_RuntimeCircleFixtures)
+			&& !hasNullFixtureVector(m_RuntimeTilemapFixtures)
 			&& !hasNullPointer(m_RuntimeDistanceJoints);
 		if (!ownershipIsConsistent)
 		{
@@ -3341,6 +3549,7 @@ namespace TomCat {
 			m_RuntimePhysicsDefinitions.Bodies != desired.Bodies
 			|| m_RuntimePhysicsDefinitions.BoxFixtures != desired.BoxFixtures
 			|| m_RuntimePhysicsDefinitions.CircleFixtures != desired.CircleFixtures
+			|| m_RuntimePhysicsDefinitions.TilemapFixtures != desired.TilemapFixtures
 			|| m_RuntimePhysicsDefinitions.DistanceJoints != desired.DistanceJoints;
 		if (!hasMutation)
 		{
@@ -3422,6 +3631,26 @@ namespace TomCat {
 				if (entity.HasComponent<CircleCollider2D>())
 					entity.GetComponent<CircleCollider2D>().RuntimeFixture = nullptr;
 			}, m_RuntimePhysicsSyncStatistics.CircleFixturesDestroyed);
+		// Tilemap colliders own a whole fixture vector per entity; a signature
+		// change rebuilds the merged set on the entity's body in one step.
+		for (auto iterator = m_RuntimeTilemapFixtures.begin();
+			iterator != m_RuntimeTilemapFixtures.end();)
+		{
+			const UUID uuid = iterator->first;
+			if (!signatureChanged(m_RuntimePhysicsDefinitions.TilemapFixtures,
+				desired.TilemapFixtures, uuid))
+			{
+				++iterator;
+				continue;
+			}
+			if (b2Body* body = !iterator->second.empty()
+				? iterator->second.front()->GetBody() : nullptr)
+				for (b2Fixture* fixture : iterator->second)
+					body->DestroyFixture(fixture);
+			m_RuntimePhysicsSyncStatistics.TilemapFixturesDestroyed
+				+= iterator->second.size();
+			iterator = m_RuntimeTilemapFixtures.erase(iterator);
+		}
 
 		for (auto iterator = m_RuntimeBodies.begin(); iterator != m_RuntimeBodies.end();)
 		{
@@ -3632,6 +3861,48 @@ namespace TomCat {
 				if (entity.GetComponent<CircleCollider2D>().Enabled)
 					TC_Core_Warn("Skipping invalid CircleCollider2D on entity '{0}'",
 						entity.GetName());
+			}
+
+			if (desired.TilemapFixtures.find(uuid) != desired.TilemapFixtures.end()
+				&& entity.HasComponent<Tilemap2D>() && entity.HasComponent<TilemapCollider2D>()
+				&& m_RuntimeTilemapFixtures.find(uuid)
+					== m_RuntimeTilemapFixtures.end())
+			{
+				auto& collider = entity.GetComponent<TilemapCollider2D>();
+				const auto& tilemap = entity.GetComponent<Tilemap2D>();
+				const uint8_t entityLayer = entity.HasComponent<EntityMetadata>()
+					? entity.GetComponent<EntityMetadata>().Layer : 0;
+				const TilemapCollisionPlan plan = PlanTilemapCollision(tilemap,
+					collider, FindTilemapGrid2D(uuid), transform, entityLayer);
+				if (!plan.Fixtures.empty())
+				{
+					std::vector<b2Fixture*> fixtures;
+					fixtures.reserve(plan.Fixtures.size());
+					for (const TilemapFixtureGeometry& geometry : plan.Fixtures)
+					{
+						b2PolygonShape shape;
+						shape.SetAsBox(geometry.HalfExtent.x, geometry.HalfExtent.y,
+							{ geometry.Center.x, geometry.Center.y }, 0.0f);
+						b2FixtureDef fixtureDef;
+						fixtureDef.shape = &shape;
+						fixtureDef.density = 0.0f;
+						fixtureDef.friction = collider.Friction;
+						fixtureDef.restitution = collider.Restitution;
+						fixtureDef.restitutionThreshold
+							= collider.RestitutionThreshold;
+						fixtureDef.filter.categoryBits = collider.CollisionLayer;
+						fixtureDef.filter.maskBits = collider.CollisionMask;
+						if (b2Fixture* fixture = body->CreateFixture(&fixtureDef))
+							fixtures.push_back(fixture);
+					}
+					if (!fixtures.empty())
+					{
+						m_RuntimePhysicsSyncStatistics.TilemapFixturesCreated
+							+= fixtures.size();
+						m_RuntimeTilemapFixtures.emplace(uuid,
+							std::move(fixtures));
+					}
+				}
 			}
 		}
 
@@ -3881,6 +4152,7 @@ namespace TomCat {
 		m_RuntimeBodies.clear();
 		m_RuntimeBoxFixtures.clear();
 		m_RuntimeCircleFixtures.clear();
+		m_RuntimeTilemapFixtures.clear();
 		m_RuntimeDistanceJoints.clear();
 		m_RuntimePhysicsPoses.clear();
 		m_RuntimePhysicsDefinitions = {};
@@ -3979,6 +4251,7 @@ namespace TomCat {
 		m_RuntimeBodies.clear();
 		m_RuntimeBoxFixtures.clear();
 		m_RuntimeCircleFixtures.clear();
+		m_RuntimeTilemapFixtures.clear();
 		m_RuntimeDistanceJoints.clear();
 		m_RuntimePhysicsPoses.clear();
 		m_RuntimePhysicsDefinitions = {};

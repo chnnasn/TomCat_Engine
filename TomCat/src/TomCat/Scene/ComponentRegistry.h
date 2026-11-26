@@ -51,6 +51,7 @@ namespace TomCat {
 		inline constexpr uint64_t Light2D = 0x9f00000000000013ULL;
 		inline constexpr uint64_t Grid2D = 0x9f00000000000014ULL;
 		inline constexpr uint64_t TilemapRenderer2D = 0x9f00000000000015ULL;
+		inline constexpr uint64_t TilemapCollider2D = 0x9f00000000000019ULL;
 
 		// Property IDs below preserve the numeric IDs exposed by the original
 		// gameplay ABI. They are now persisted 64-bit identities owned by the
@@ -195,6 +196,14 @@ namespace TomCat {
 			inline constexpr uint64_t SortingLayer = 1404;
 			inline constexpr uint64_t OrderInLayer = 1405;
 			inline constexpr uint64_t Material = 1406;
+		}
+		namespace TilemapCollider2DProperties {
+			inline constexpr uint64_t Enabled = 1500;
+			inline constexpr uint64_t CollisionLayer = 1501;
+			inline constexpr uint64_t CollisionMask = 1502;
+			inline constexpr uint64_t Friction = 1503;
+			inline constexpr uint64_t Restitution = 1504;
+			inline constexpr uint64_t RestitutionThreshold = 1505;
 		}
 		namespace ParticleSystem2DProperties {
 			inline constexpr uint64_t Enabled = 1100;

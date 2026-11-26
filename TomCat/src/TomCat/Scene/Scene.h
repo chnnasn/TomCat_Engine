@@ -30,6 +30,8 @@ namespace TomCat {
 	class Entity;
 	class SceneContactFilter2D;
 	class SceneContactListener;
+	// Components.h type used through pointers in Scene member signatures.
+	struct Grid2D;
 
 	enum class ColliderDebugShapeType
 	{
@@ -88,6 +90,8 @@ namespace TomCat {
 		uint64_t BoxFixturesDestroyed = 0;
 		uint64_t CircleFixturesCreated = 0;
 		uint64_t CircleFixturesDestroyed = 0;
+		uint64_t TilemapFixturesCreated = 0;
+		uint64_t TilemapFixturesDestroyed = 0;
 		uint64_t DistanceJointsCreated = 0;
 		uint64_t DistanceJointsDestroyed = 0;
 	};
@@ -268,6 +272,7 @@ namespace TomCat {
 			std::unordered_map<UUID, uint64_t> Bodies;
 			std::unordered_map<UUID, uint64_t> BoxFixtures;
 			std::unordered_map<UUID, uint64_t> CircleFixtures;
+			std::unordered_map<UUID, uint64_t> TilemapFixtures;
 			std::unordered_map<UUID, uint64_t> DistanceJoints;
 		};
 		RuntimePhysicsDefinitions BuildRuntimePhysicsDefinitions() const;
@@ -275,6 +280,10 @@ namespace TomCat {
 		void ResetRuntimePhysicsPointers();
 		void ArmRuntimeScriptBatchCallback();
 		b2Body* FindRuntimeBody(UUID entityID) const;
+		// Resolves the Grid2D layout owner a tilemap renders with, readable
+		// from const definition scans. The tilemap's own stride is used when no
+		// parent carries a Grid2D.
+		const Grid2D* FindTilemapGrid2D(UUID entityID) const;
 		void SynchronizeRuntimeTransforms();
 		bool DispatchPendingCollisionEvents();
 		void RenderRuntimeScene();
@@ -309,6 +318,9 @@ namespace TomCat {
 		std::unordered_map<UUID, b2Body*> m_RuntimeBodies;
 		std::unordered_map<UUID, b2Fixture*> m_RuntimeBoxFixtures;
 		std::unordered_map<UUID, b2Fixture*> m_RuntimeCircleFixtures;
+		// Merged tilemap rects create several fixtures on one body, so the
+		// runtime ownership map keeps a vector per tilemap entity.
+		std::unordered_map<UUID, std::vector<b2Fixture*>> m_RuntimeTilemapFixtures;
 		std::unordered_map<UUID, b2Joint*> m_RuntimeDistanceJoints;
 		RuntimePhysicsDefinitions m_RuntimePhysicsDefinitions;
 		struct RuntimePhysicsPose

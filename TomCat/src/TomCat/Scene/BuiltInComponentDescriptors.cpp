@@ -2055,7 +2055,9 @@ namespace TomCat {
 					output << YAML::Key << "FlipX" << YAML::Value << cell.FlipX
 						<< YAML::Key << "FlipY" << YAML::Value << cell.FlipY
 						<< YAML::Key << "RotationQuarterTurns" << YAML::Value
-						<< cell.RotationQuarterTurns << YAML::EndMap;
+						<< cell.RotationQuarterTurns
+						<< YAML::Key << "Collision" << YAML::Value
+						<< static_cast<int32_t>(cell.Collision) << YAML::EndMap;
 				}
 				output << YAML::EndSeq << YAML::EndMap;
 				return output.good();
@@ -2094,7 +2096,7 @@ namespace TomCat {
 				{
 					if (!ValidateLegacyMap(cellNode, "Tilemap2D cell",
 						{ "Coordinate", "SpriteHandle", "Tint", "FlipX", "FlipY",
-							"RotationQuarterTurns" }, {}, error))
+							"RotationQuarterTurns" }, { "Collision" }, error))
 						return false;
 					const YAML::Node coordinate = cellNode["Coordinate"];
 					if (!coordinate.IsSequence() || coordinate.size() != 2)
@@ -2107,6 +2109,15 @@ namespace TomCat {
 					cell.FlipX = cellNode["FlipX"].as<bool>();
 					cell.FlipY = cellNode["FlipY"].as<bool>();
 					cell.RotationQuarterTurns = cellNode["RotationQuarterTurns"].as<int32_t>();
+					// Collision is optional so scenes saved before the field
+					// existed keep loading with every cell colliding as None.
+					if (cellNode["Collision"])
+					{
+						const int32_t collision = cellNode["Collision"].as<int32_t>();
+						if (collision < 0 || collision > 2)
+							throw std::runtime_error("Tilemap2D cell collision is invalid");
+						cell.Collision = static_cast<TilemapCollisionMode2D>(collision);
+					}
 					if (!IsUnitColor(cell.Tint))
 						throw std::runtime_error("Tilemap2D cell tint is invalid");
 					tilemap.Cells.push_back(std::move(cell));
@@ -2242,6 +2253,59 @@ namespace TomCat {
 					ComponentIds::TilemapRenderer2DProperties::OrderInLayer,
 					"OrderInLayer", &TilemapRenderer2D::OrderInLayer),
 				std::move(material)
+			};
+			return descriptor;
+		}
+
+		ComponentDescriptor MakeTilemapCollider2DDescriptor()
+		{
+			auto descriptor = BaseDescriptor<TilemapCollider2D>(
+				ComponentIds::TilemapCollider2D, "TomCat.TilemapCollider2D",
+				"Tilemap Collider 2D");
+			descriptor.UseGenericInspector = true;
+			// Script-accessible so the generated managed proxy can retune the
+			// merged fixture parameters at runtime.
+			descriptor.ScriptAccessible = true;
+			descriptor.Add = [](Entity entity, std::string& error)
+			{
+				if (!entity)
+				{
+					error = "Cannot add Tilemap Collider 2D to an invalid entity";
+					return false;
+				}
+				if (!entity.HasComponent<Tilemap2D>())
+				{
+					error = "Tilemap Collider 2D requires a Tilemap 2D entity";
+					return false;
+				}
+				if (!entity.HasComponent<TilemapCollider2D>())
+					entity.AddComponent<TilemapCollider2D>();
+				return true;
+			};
+			descriptor.Properties = {
+				BoolProperty<TilemapCollider2D>(
+					ComponentIds::TilemapCollider2DProperties::Enabled,
+					"Enabled", &TilemapCollider2D::Enabled),
+				CollisionBitsProperty(
+					ComponentIds::TilemapCollider2DProperties::CollisionLayer,
+					"CollisionLayer", [](Entity entity) -> uint16_t&
+					{ return entity.GetComponent<TilemapCollider2D>().CollisionLayer; },
+					false),
+				CollisionBitsProperty(
+					ComponentIds::TilemapCollider2DProperties::CollisionMask,
+					"CollisionMask", [](Entity entity) -> uint16_t&
+					{ return entity.GetComponent<TilemapCollider2D>().CollisionMask; },
+					true),
+				FloatProperty<TilemapCollider2D>(
+					ComponentIds::TilemapCollider2DProperties::Friction,
+					"Friction", &TilemapCollider2D::Friction, 0.0f),
+				FloatProperty<TilemapCollider2D>(
+					ComponentIds::TilemapCollider2DProperties::Restitution,
+					"Restitution", &TilemapCollider2D::Restitution, 0.0f, 1.0f),
+				FloatProperty<TilemapCollider2D>(
+					ComponentIds::TilemapCollider2DProperties::RestitutionThreshold,
+					"RestitutionThreshold", &TilemapCollider2D::RestitutionThreshold,
+					0.0f)
 			};
 			return descriptor;
 		}
@@ -2384,6 +2448,7 @@ namespace TomCat {
 		result.emplace_back(MakeLight2DDescriptor());
 		result.emplace_back(MakeGrid2DDescriptor());
 		result.emplace_back(MakeTilemapRenderer2DDescriptor());
+		result.emplace_back(MakeTilemapCollider2DDescriptor());
 		return result;
 	}
 

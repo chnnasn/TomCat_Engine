@@ -164,6 +164,269 @@ namespace {
 			"Top-left tile render order did not reverse Y");
 	}
 
+	void TestTilemapCollisionMerge()
+	{
+		auto solidCell = [](glm::ivec2 coordinate,
+			TomCat::TilemapCollisionMode2D mode
+			= TomCat::TilemapCollisionMode2D::Solid)
+		{
+			TomCat::TilemapCell cell;
+			cell.Coordinate = coordinate;
+			cell.SpriteHandle = TomCat::AssetHandle(1001);
+			cell.Collision = mode;
+			return cell;
+		};
+
+		{
+			TomCat::Tilemap2D tilemap;
+			Require(TomCat::Tilemap2DRuntime::GenerateCollisionRects(tilemap, nullptr)
+				.empty(), "an empty tilemap produced collision rects");
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ 0, 0 },
+				TomCat::TilemapCollisionMode2D::OneWay));
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ 1, 0 },
+				TomCat::TilemapCollisionMode2D::None));
+			Require(TomCat::Tilemap2DRuntime::GenerateCollisionRects(tilemap, nullptr)
+				.empty(),
+				"OneWay and None cells must never produce collision rects");
+		}
+
+		{
+			TomCat::Tilemap2D tilemap;
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ 3, -7 }));
+			const auto rects = TomCat::Tilemap2DRuntime::GenerateCollisionRects(
+				tilemap, nullptr);
+			Require(rects.size() == 1, "a single solid cell did not merge");
+			Require(rects[0].Min == glm::ivec2(3, -7)
+				&& rects[0].Max == glm::ivec2(3, -7),
+				"single-cell rect did not cover the authored cell");
+		}
+
+		{
+			TomCat::Tilemap2D tilemap;
+			for (int32_t y = 0; y < 3; ++y)
+				for (int32_t x = 0; x < 4; ++x)
+					TomCat::Tilemap2DRuntime::SetCell(tilemap,
+						solidCell({ x, y }));
+			const auto rects = TomCat::Tilemap2DRuntime::GenerateCollisionRects(
+				tilemap, nullptr);
+			Require(rects.size() == 1, "a full 4x3 block did not merge to one rect");
+			Require(rects[0].Min == glm::ivec2(0, 0)
+				&& rects[0].Max == glm::ivec2(3, 2),
+				"block rect did not cover every authored cell");
+		}
+
+		{
+			TomCat::Tilemap2D tilemap;
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ 0, 0 }));
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ 1, 0 }));
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ 2, 0 }));
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ 0, 1 }));
+			const auto rects = TomCat::Tilemap2DRuntime::GenerateCollisionRects(
+				tilemap, nullptr);
+			Require(rects.size() == 2, "an L-shape did not merge into two rects");
+			Require(rects[0].Min == glm::ivec2(0, 0)
+				&& rects[0].Max == glm::ivec2(2, 0)
+				&& rects[1].Min == glm::ivec2(0, 1)
+				&& rects[1].Max == glm::ivec2(0, 1),
+				"L-shape merge produced unexpected extents");
+		}
+
+		{
+			TomCat::Tilemap2D tilemap;
+			int64_t coveredCells = 0;
+			for (int32_t y = 0; y < 3; ++y)
+				for (int32_t x = 0; x < 3; ++x)
+					if (x != 1 || y != 1)
+						TomCat::Tilemap2DRuntime::SetCell(tilemap,
+							solidCell({ x, y }));
+			const auto rects = TomCat::Tilemap2DRuntime::GenerateCollisionRects(
+				tilemap, nullptr);
+			Require(!rects.empty(), "ring merge produced no rects");
+			bool coversHole = false;
+			for (const auto& rect : rects)
+			{
+				coveredCells += (int64_t(rect.Max.x) - rect.Min.x + 1)
+					* (int64_t(rect.Max.y) - rect.Min.y + 1);
+				coversHole = coversHole || (rect.Min.x <= 1 && 1 <= rect.Max.x
+					&& rect.Min.y <= 1 && 1 <= rect.Max.y);
+			}
+			Require(coveredCells == 8,
+				"merged rects must cover the 8 solid cells exactly once");
+			Require(!coversHole, "the merge filled the ring's hole");
+		}
+
+		{
+			TomCat::Tilemap2D tilemap;
+			for (int32_t y = -2; y <= -1; ++y)
+				for (int32_t x = -5; x <= -3; ++x)
+					TomCat::Tilemap2DRuntime::SetCell(tilemap,
+						solidCell({ x, y }));
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ -2, -1 },
+				TomCat::TilemapCollisionMode2D::OneWay));
+			const auto rects = TomCat::Tilemap2DRuntime::GenerateCollisionRects(
+				tilemap, nullptr);
+			Require(rects.size() == 1
+				&& rects[0].Min == glm::ivec2(-5, -2)
+				&& rects[0].Max == glm::ivec2(-3, -1),
+				"negative-coordinate merge failed or included the OneWay cell");
+		}
+
+		{
+			TomCat::Tilemap2D unsorted;
+			std::vector<glm::ivec2> coordinates;
+			for (int32_t y = -1; y <= 1; ++y)
+				for (int32_t x = -2; x <= 2; ++x)
+					coordinates.push_back({ x, y });
+			for (auto iterator = coordinates.rbegin();
+				iterator != coordinates.rend(); ++iterator)
+				TomCat::Tilemap2DRuntime::SetCell(unsorted, solidCell(*iterator));
+			TomCat::Tilemap2D sortedTilemap = unsorted;
+			TomCat::Tilemap2DRuntime::Normalize(sortedTilemap);
+			Require(TomCat::Tilemap2DRuntime::GenerateCollisionRects(unsorted, nullptr)
+				== TomCat::Tilemap2DRuntime::GenerateCollisionRects(sortedTilemap,
+					nullptr),
+				"merge output depends on the sparse vector's order");
+		}
+
+		TomCat::Grid2D rectangleGrid;
+		TomCat::Grid2D isometricGrid;
+		isometricGrid.Layout = TomCat::GridCellLayout2D::Isometric;
+		Require(TomCat::Tilemap2DRuntime::SupportsCollisionMerging(nullptr)
+			&& TomCat::Tilemap2DRuntime::SupportsCollisionMerging(&rectangleGrid)
+			&& !TomCat::Tilemap2DRuntime::SupportsCollisionMerging(&isometricGrid),
+			"layout support classification is incorrect");
+		TomCat::Tilemap2D tilemap;
+		TomCat::Tilemap2DRuntime::SetCell(tilemap, solidCell({ 0, 0 }));
+		Require(TomCat::Tilemap2DRuntime::GenerateCollisionRects(tilemap,
+			&isometricGrid).empty(),
+			"non-Rectangle grids must not produce merged rects");
+	}
+
+	const TomCat::ComponentDescriptor& RequireDescriptor(uint64_t typeId,
+		std::string_view stableName, size_t propertyCount);
+
+	void TestTilemapCollisionPersistence()
+	{
+		RequireDescriptor(TomCat::ComponentIds::TilemapCollider2D,
+			"TomCat.TilemapCollider2D", 6);
+
+		auto scene = TomCat::CreateRef<TomCat::Scene>();
+		TomCat::Entity entity = scene->CreateEntityWithUUID(
+			TomCat::UUID(0x20260000000000f1ULL), "Collision fixture");
+		std::string error;
+		TomCat::ComponentRegistry& registry = TomCat::ComponentRegistry::Get();
+		Require(registry.Add(entity, TomCat::UUID(TomCat::ComponentIds::Tilemap2D),
+				error),
+			"Tilemap2D descriptor add failed");
+		Require(registry.Add(entity,
+				TomCat::UUID(TomCat::ComponentIds::TilemapCollider2D), error),
+			"TilemapCollider2D descriptor add failed on a Tilemap entity");
+		// Adding the collider without a Tilemap must be rejected.
+		TomCat::Entity orphan = scene->CreateEntity("Collider orphan");
+		Require(!registry.Add(orphan,
+				TomCat::UUID(TomCat::ComponentIds::TilemapCollider2D), error)
+			&& !orphan.HasComponent<TomCat::TilemapCollider2D>(),
+			"TilemapCollider2D was accepted on an entity without a Tilemap");
+
+		auto& tilemap = entity.GetComponent<TomCat::Tilemap2D>();
+		auto paint = [](glm::ivec2 coordinate,
+			TomCat::TilemapCollisionMode2D mode)
+		{
+			TomCat::TilemapCell cell;
+			cell.Coordinate = coordinate;
+			cell.SpriteHandle = TomCat::AssetHandle(4001);
+			cell.Collision = mode;
+			return cell;
+		};
+		TomCat::Tilemap2DRuntime::SetCell(tilemap,
+			paint({ 0, 0 }, TomCat::TilemapCollisionMode2D::Solid));
+		TomCat::Tilemap2DRuntime::SetCell(tilemap,
+			paint({ 1, 0 }, TomCat::TilemapCollisionMode2D::OneWay));
+		TomCat::Tilemap2DRuntime::SetCell(tilemap,
+			paint({ 2, 0 }, TomCat::TilemapCollisionMode2D::None));
+
+		auto& collider = entity.GetComponent<TomCat::TilemapCollider2D>();
+		collider.CollisionLayer = 0x0f00;
+		collider.CollisionMask = 0x0ff0;
+		collider.Friction = 0.75f;
+		collider.Restitution = 0.25f;
+		collider.RestitutionThreshold = 0.6f;
+
+		std::string document;
+		Require(TomCat::SceneArchiveCodec::Encode(scene, document, error),
+			"collision scene serialization failed");
+		Require(document.find("TomCat.TilemapCollider2D") != std::string::npos
+			&& document.find("Collision: 1") != std::string::npos,
+			"collision scene component records are missing");
+
+		auto decoded = TomCat::CreateRef<TomCat::Scene>();
+		const std::vector<uint8_t> bytes(document.begin(), document.end());
+		Require(TomCat::SceneArchiveCodec::Decode(bytes, decoded,
+			"Advanced2DCollision.tomcat", false),
+			"collision scene deserialization failed");
+		TomCat::Entity loaded = decoded->FindEntityByUUID(entity.GetUUID());
+		Require(loaded && loaded.HasComponent<TomCat::Tilemap2D>()
+			&& loaded.HasComponent<TomCat::TilemapCollider2D>(),
+			"collision components did not round-trip");
+		const auto& loadedTilemap = loaded.GetComponent<TomCat::Tilemap2D>();
+		Require(TomCat::Tilemap2DRuntime::FindCell(loadedTilemap, { 0, 0 })
+				->Collision == TomCat::TilemapCollisionMode2D::Solid
+			&& TomCat::Tilemap2DRuntime::FindCell(loadedTilemap, { 1, 0 })
+				->Collision == TomCat::TilemapCollisionMode2D::OneWay
+			&& TomCat::Tilemap2DRuntime::FindCell(loadedTilemap, { 2, 0 })
+				->Collision == TomCat::TilemapCollisionMode2D::None,
+			"cell collision modes did not round-trip");
+		const auto& loadedCollider =
+			loaded.GetComponent<TomCat::TilemapCollider2D>();
+		Require(loadedCollider.CollisionLayer == collider.CollisionLayer
+			&& loadedCollider.CollisionMask == collider.CollisionMask
+			&& Near(loadedCollider.Friction, collider.Friction)
+			&& Near(loadedCollider.Restitution, collider.Restitution)
+			&& Near(loadedCollider.RestitutionThreshold,
+				collider.RestitutionThreshold),
+			"TilemapCollider2D values did not round-trip");
+		// Scenes written before the Collision field existed carry no key per
+		// cell; decoding them must keep every cell at the None default.
+		YAML::Node root = YAML::Load(document);
+		for (const YAML::Node& entityNode : root["Entities"])
+		{
+			for (const YAML::Node& record : entityNode["Components"])
+			{
+				if (record["StableName"].as<std::string>()
+					!= "TomCat.Tilemap2D")
+					continue;
+				for (YAML::Node cellNode : record["Properties"]["Cells"])
+					cellNode.remove("Collision");
+			}
+		}
+		const std::string legacyDocument = YAML::Dump(root);
+		const std::vector<uint8_t> legacyBytes(legacyDocument.begin(),
+			legacyDocument.end());
+		auto legacyDecoded = TomCat::CreateRef<TomCat::Scene>();
+		Require(TomCat::SceneArchiveCodec::Decode(legacyBytes, legacyDecoded,
+			"Advanced2DLegacy.tomcat", false),
+			"legacy collision-free scene deserialization failed");
+		TomCat::Entity legacy =
+			legacyDecoded->FindEntityByUUID(entity.GetUUID());
+		const auto& legacyTilemap = legacy.GetComponent<TomCat::Tilemap2D>();
+		Require(TomCat::Tilemap2DRuntime::FindCell(legacyTilemap, { 0, 0 })
+				->Collision == TomCat::TilemapCollisionMode2D::None
+			&& TomCat::Tilemap2DRuntime::FindCell(legacyTilemap, { 1, 0 })
+				->Collision == TomCat::TilemapCollisionMode2D::None,
+			"cells without a persisted Collision key must load as None");
+
+		const TomCat::Ref<TomCat::Scene> cloned = TomCat::Scene::Copy(decoded);
+		TomCat::Entity clonedEntity = cloned
+			? cloned->FindEntityByUUID(entity.GetUUID()) : TomCat::Entity{};
+		Require(clonedEntity
+			&& TomCat::Tilemap2DRuntime::FindCell(
+				clonedEntity.GetComponent<TomCat::Tilemap2D>(), { 0, 0 })
+				->Collision == TomCat::TilemapCollisionMode2D::Solid
+			&& clonedEntity.GetComponent<TomCat::TilemapCollider2D>()
+				.CollisionLayer == collider.CollisionLayer,
+			"Scene clone dropped tilemap collision data");
+	}
+
 	TomCat::ParticleSystem2D MakeParticleFixture()
 	{
 		TomCat::ParticleSystem2D system;
@@ -575,6 +838,8 @@ int main()
 		TomCat::Log::Init();
 		TestMultiSelectionPropertyTransaction();
 		TestTilemapEditingAndTransform();
+		TestTilemapCollisionMerge();
+		TestTilemapCollisionPersistence();
 		TestDeterministicParticleRuntime();
 		TestLightAttenuation();
 		TestRegistrySceneRoundTripAndReferences();

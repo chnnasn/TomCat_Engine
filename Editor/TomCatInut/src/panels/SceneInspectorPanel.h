@@ -46,6 +46,7 @@ namespace TomCat {
 			bool FlipX = false;
 			bool FlipY = false;
 			int32_t RotationQuarterTurns = 0;
+			TilemapCollisionMode2D Collision = TilemapCollisionMode2D::None;
 		};
 
 		bool AttachCSharpScript(Entity entity, AssetHandle handle);
@@ -55,6 +56,7 @@ namespace TomCat {
 		void DrawGrid2DInspector(Grid2D& grid);
 		void DrawTilemap2DInspector(Tilemap2D& tilemap, Entity entity);
 		void DrawTilemapRenderer2DInspector(TilemapRenderer2D& renderer);
+		void DrawTilemapCollider2DInspector(TilemapCollider2D& collider);
 		void DrawParticleSystem2DInspector(ParticleSystem2D& system);
 		void DrawLight2DInspector(Light2D& light);
 		void DrawUIButtonInspector(UIButton& button, Entity entity);

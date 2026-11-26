@@ -314,6 +314,17 @@ namespace TomCat {
 		}
 	};
 
+	// Per-cell collision authoring. Cells default to None so legacy scenes keep
+	// rendering identically until a TilemapCollider2D opts the tilemap in.
+	enum class TilemapCollisionMode2D : int32_t
+	{
+		None = 0,
+		Solid,
+		// Stored for v1 but never merged into fixtures: one-way platforms need a
+		// pre-solve contact filter the 2D contact pipeline does not expose yet.
+		OneWay
+	};
+
 	// A sparse authoring grid. Each occupied coordinate owns one stable Sprite
 	// reference, so atlased sub-sprites work without introducing a second asset
 	// identity system. Cells are kept in deterministic row-major order by the
@@ -326,6 +337,9 @@ namespace TomCat {
 		bool FlipX = false;
 		bool FlipY = false;
 		int32_t RotationQuarterTurns = 0;
+		// Collision is authored per cell, not per sprite, because the same
+		// sprite can be a wall in one scene and decoration in another.
+		TilemapCollisionMode2D Collision = TilemapCollisionMode2D::None;
 	};
 
 	enum class GridCellLayout2D : int32_t
@@ -398,6 +412,26 @@ namespace TomCat {
 		int32_t SortingLayer = 0;
 		int32_t OrderInLayer = 0;
 		std::vector<TilemapCell> Cells;
+	};
+
+	// Opt-in collision generation for a Tilemap2D entity. Adding this
+	// component makes runtime physics merge every Collision == Solid cell into
+	// a minimal set of static box fixtures at Play time. Generated fixtures are
+	// runtime-only: they never serialize back into the scene or a prefab. Field
+	// names and semantics intentionally mirror BoxCollider2D. Only Rectangle
+	// grids merge correctly in v1; other layouts skip generation with a warning.
+	struct TilemapCollider2D
+	{
+		bool Enabled = true;
+		// Box2D category/mask bits. CollisionLayer must contain at least one bit.
+		uint16_t CollisionLayer = 0x0001;
+		uint16_t CollisionMask = 0xFFFF;
+		float Friction = 0.5f;
+		float Restitution = 0.0f;
+		float RestitutionThreshold = 0.5f;
+
+		TilemapCollider2D() = default;
+		TilemapCollider2D(const TilemapCollider2D&) = default;
 	};
 
 	struct Particle2D

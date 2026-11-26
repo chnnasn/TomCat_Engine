@@ -22,6 +22,33 @@ namespace TomCat {
 		// breaker after sorting layer and order in layer.
 		uint64_t GetCellRenderOrder(glm::ivec2 coordinate,
 			TilemapSortOrder2D sortOrder);
+
+		// Inclusive cell-space rectangle produced by collision merging.
+		struct CollisionRect2D
+		{
+			glm::ivec2 Min{ 0, 0 };
+			glm::ivec2 Max{ 0, 0 };
+
+			friend bool operator==(const CollisionRect2D& left,
+				const CollisionRect2D& right)
+			{
+				return left.Min == right.Min && left.Max == right.Max;
+			}
+			friend bool operator!=(const CollisionRect2D& left,
+				const CollisionRect2D& right)
+			{
+				return !(left == right);
+			}
+		};
+
+		// Greedy maximal-rectangle merge over every Collision == Solid cell.
+		// Returns an empty vector when the layout is not axis-aligned (the
+		// Grid2D parameter follows the render path: null means the tilemap's
+		// own Rectangle stride). OneWay cells are stored but never merged.
+		std::vector<CollisionRect2D> GenerateCollisionRects(
+			const Tilemap2D& tilemap, const Grid2D* grid);
+		// Rectangle strides exactly in the sense of GetCellTransform.
+		bool SupportsCollisionMerging(const Grid2D* grid);
 	}
 
 	namespace ParticleSystem2DRuntime {

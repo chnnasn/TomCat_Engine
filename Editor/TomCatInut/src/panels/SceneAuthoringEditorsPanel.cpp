@@ -1249,9 +1249,10 @@ namespace TomCat {
 		TilePaletteState& palette = m_TilePaletteStates[
 			static_cast<uint64_t>(entity.GetUUID())];
 		static constexpr const char* toolLabels[] = {
-			"Select", "Move", "Paint", "Box", "Eyedropper", "Erase", "Fill"
+			"Select", "Move", "Paint", "Box", "Eyedropper", "Erase", "Fill",
+			"Collision"
 		};
-		for (int tool = 0; tool < 7; ++tool)
+		for (int tool = 0; tool < 8; ++tool)
 		{
 			if (tool > 0 && ImGui::GetItemRectMax().x + 90.0f < ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) ImGui::SameLine();
 			if (ImGui::Selectable(toolLabels[tool],
@@ -1266,6 +1267,32 @@ namespace TomCat {
 		if (palette.Tool == TilePaletteTool::Move)
 			ImGui::InputInt2("Move To", &palette.MoveDestination.x);
 		DrawColorField("Tint", glm::value_ptr(palette.Tint));
+		if (palette.Tool == TilePaletteTool::Select
+			|| palette.Tool == TilePaletteTool::Eyedropper)
+		{
+			if (const TilemapCell* picked = Tilemap2DRuntime::FindCell(tilemap,
+				palette.Coordinate))
+			{
+				ImGui::TextDisabled("Cell Collision: %s",
+					picked->Collision == TilemapCollisionMode2D::Solid ? "Solid"
+					: picked->Collision == TilemapCollisionMode2D::OneWay
+						? "One Way" : "None");
+			}
+		}
+		const char* collisionModes[] = { "None", "Solid", "One Way" };
+		int collisionMode = std::clamp(static_cast<int>(palette.Collision), 0, 2);
+		if (ImGui::Combo("Collision", &collisionMode, collisionModes, 3))
+			palette.Collision = static_cast<TilemapCollisionMode2D>(collisionMode);
+		if (entity.HasComponent<TilemapCollider2D>())
+		{
+			Entity gridEntity = m_Shared.Context->GetParent(entity);
+			const Grid2D* grid = gridEntity && gridEntity.HasComponent<Grid2D>()
+				? &gridEntity.GetComponent<Grid2D>() : nullptr;
+			if (!Tilemap2DRuntime::SupportsCollisionMerging(grid))
+				ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f),
+					"Tilemap Collider 2D merges Rectangle grids only; "
+					"this Grid layout generates no runtime fixtures.");
+		}
 
 		std::vector<std::pair<AssetHandle, std::string>> sprites;
 		if (static_cast<uint64_t>(m_ActiveTilePaletteHandle) != 0)
@@ -1348,8 +1375,13 @@ namespace TomCat {
 			|| palette.Tool == TilePaletteTool::Box
 			|| palette.Tool == TilePaletteTool::Fill)
 			&& static_cast<uint64_t>(palette.SpriteHandle) == 0;
+		// The collision brush can sweep the box defined for Box when its end
+		// differs from the start; otherwise it paints the single cell.
+		const bool collisionToolBoxes = palette.Tool == TilePaletteTool::Collision
+			&& palette.BoxEnd != palette.Coordinate;
 		ImGui::BeginDisabled(missingPaintSprite
-			|| (palette.Tool == TilePaletteTool::Box && !boxAreaValid));
+			|| ((palette.Tool == TilePaletteTool::Box || collisionToolBoxes)
+				&& !boxAreaValid));
 		if (ImGui::Button("Apply Tool", ImVec2(-1.0f, 0.0f)))
 		{
 			bool changed = false;
@@ -1359,6 +1391,7 @@ namespace TomCat {
 				cell.Coordinate = coordinate;
 				cell.SpriteHandle = palette.SpriteHandle;
 				cell.Tint = palette.Tint;
+				cell.Collision = palette.Collision;
 				changed |= Tilemap2DRuntime::SetCell(tilemap, std::move(cell));
 			};
 			switch (palette.Tool)
@@ -1369,6 +1402,7 @@ namespace TomCat {
 					{
 						palette.SpriteHandle = selectedCell->SpriteHandle;
 						palette.Tint = selectedCell->Tint;
+						palette.Collision = selectedCell->Collision;
 					}
 					break;
 				case TilePaletteTool::Move:
@@ -1394,6 +1428,33 @@ namespace TomCat {
 				case TilePaletteTool::Erase:
 					changed = Tilemap2DRuntime::EraseCell(tilemap, palette.Coordinate);
 					break;
+				case TilePaletteTool::Collision:
+				{
+					// Collision-only brush: existing visual data is preserved,
+					// and a cell may exist with no sprite at all (handle 0
+					// renders nothing but still participates in merging).
+					auto applyCollision = [&](glm::ivec2 coordinate)
+					{
+						TilemapCell cell;
+						if (const TilemapCell* source
+							= Tilemap2DRuntime::FindCell(tilemap, coordinate))
+							cell = *source;
+						cell.Coordinate = coordinate;
+						cell.Collision = palette.Collision;
+						changed |= Tilemap2DRuntime::SetCell(tilemap,
+							std::move(cell));
+					};
+					if (collisionToolBoxes)
+					{
+						for (int64_t y = boxMinY; y <= boxMaxY; ++y)
+							for (int64_t x = boxMinX; x <= boxMaxX; ++x)
+								applyCollision({ static_cast<int>(x),
+									static_cast<int>(y) });
+					}
+					else
+						applyCollision(palette.Coordinate);
+					break;
+				}
 				case TilePaletteTool::Fill:
 				{
 					const AssetHandle replaced = selectedCell

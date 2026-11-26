@@ -5,6 +5,7 @@
 #include "TomCat/Project/Project.h"
 #include "TomCat/Runtime/RuntimeCompatibility.h"
 #include "TomCat/Scene/Components.h"
+#include "TomCat/Scene/Advanced2D.h"
 #include "TomCat/Scene/Entity.h"
 #include "TomCat/Scene/Scene.h"
 #include "TomCat/Scene/SceneSerializer.h"
@@ -1542,6 +1543,127 @@ namespace {
 		auto* body = static_cast<b2Body*>(ball.GetComponent<TomCat::Rigidbody2D>().RuntimeBody);
 		Require(body && body->GetPosition().y > -0.1f,
 			"dynamic body passed through collider-only static body");
+		scene.OnRuntimeStop();
+	}
+
+	void TestTilemapCollisionGeneration()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity floor = scene.CreateEntity("Tilemap floor");
+		auto& tilemap = floor.AddComponent<TomCat::Tilemap2D>();
+		auto paint = [&](glm::ivec2 coordinate,
+			TomCat::TilemapCollisionMode2D mode)
+		{
+			TomCat::TilemapCell cell;
+			cell.Coordinate = coordinate;
+			cell.SpriteHandle = TomCat::AssetHandle(1001);
+			cell.Collision = mode;
+			TomCat::Tilemap2DRuntime::SetCell(tilemap, std::move(cell));
+		};
+		for (int x = -10; x <= 10; ++x)
+			paint({ x, -1 }, TomCat::TilemapCollisionMode2D::Solid);
+		// Stored but never merged in v1; a decorative cell must never collide.
+		paint({ 12, -1 }, TomCat::TilemapCollisionMode2D::OneWay);
+		paint({ -12, -1 }, TomCat::TilemapCollisionMode2D::None);
+		floor.AddComponent<TomCat::TilemapCollider2D>();
+		TomCat::Entity ball = AddCircleBody(scene, "Falling ball",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.5f, 3.0f });
+
+		Require(scene.OnRuntimeStart(), "tilemap collision scene did not start");
+		auto stats = scene.GetRuntimePhysicsSyncStatistics();
+		Require(stats.TilemapFixturesCreated == 1,
+			"the solid row did not merge into exactly one fixture");
+		Require(!floor.HasComponent<TomCat::Rigidbody2D>()
+			&& stats.BodiesCreated == 2,
+			"the collider-only tilemap did not create one implicit static body plus the falling ball");
+		size_t floorShapes = 0;
+		TomCat::ColliderDebugShape shape{};
+		for (const auto& candidate : scene.GetColliderDebugShapes(true))
+			if (candidate.EntityID == floor.GetUUID()
+				&& candidate.Type == TomCat::ColliderDebugShapeType::Box)
+			{
+				shape = candidate;
+				++floorShapes;
+			}
+		Require(floorShapes == 1,
+			"runtime debug shapes did not expose the merged tilemap fixture");
+		Require(Near(shape.HalfSize.x, 10.5f) && Near(shape.HalfSize.y, 0.5f),
+			"the merged fixture did not cover the authored cells");
+		Require(Near(shape.Center.x, 0.0f) && Near(shape.Center.y, -1.0f),
+			"the merged fixture was not centered on the authored row");
+
+		for (int step = 0; step < 180; ++step)
+			scene.OnUpdateRuntime(TomCat::Timestep(
+				TomCat::Scene::FixedRuntimeTimestep));
+		const float settled = ball.GetComponent<TomCat::Transform>()._Translation.y;
+		// Cell row centers rest at y = -1, so the ball settles on its top edge.
+		Require(settled > -0.3f && settled < 0.3f,
+			"falling ball did not settle on the merged tilemap floor");
+
+		// Re-entering Play must regenerate the fixtures exactly once.
+		scene.OnRuntimeStop();
+		Require(scene.OnRuntimeStart(), "tilemap scene did not re-enter Play");
+		stats = scene.GetRuntimePhysicsSyncStatistics();
+		Require(stats.TilemapFixturesCreated == 1,
+			"re-entering Play duplicated the merged tilemap fixtures");
+		scene.OnRuntimeStop();
+
+		// Runtime cell edits rebuild the merged set incrementally.
+		Require(scene.OnRuntimeStart(), "tilemap scene did not restart");
+		Require(TomCat::Tilemap2DRuntime::EraseCell(tilemap, { 0, -1 }),
+			"puncturing the solid row failed");
+		scene.OnRuntimeStep();
+		stats = scene.GetRuntimePhysicsSyncStatistics();
+		Require(stats.TilemapFixturesDestroyed == 1
+			&& stats.TilemapFixturesCreated == 3,
+			"cell edits did not recreate the merged fixture set");
+
+		// A small body drops through the resulting one-cell hole.
+		TomCat::Entity marble = AddCircleBody(scene, "Falling marble",
+			TomCat::Rigidbody2D::BodyType::Dynamic, { 0.0f, 1.0f }, 0.25f);
+		for (int step = 0; step < 120; ++step)
+			scene.OnUpdateRuntime(TomCat::Timestep(
+				TomCat::Scene::FixedRuntimeTimestep));
+		Require(marble.GetComponent<TomCat::Transform>()._Translation.y < -1.5f,
+			"the marble did not fall through the removed cell");
+
+		// Removing the component tears the generated fixtures down.
+		floor.RemoveComponent<TomCat::TilemapCollider2D>();
+		scene.OnRuntimeStep();
+		stats = scene.GetRuntimePhysicsSyncStatistics();
+		Require(stats.TilemapFixturesDestroyed == 3
+			&& stats.TilemapFixturesCreated == 3,
+			"removing TilemapCollider2D did not destroy its merged fixtures");
+		scene.OnRuntimeStop();
+	}
+
+	void TestTilemapCollisionRejectsNonRectangleGrids()
+	{
+		TomCat::Scene scene;
+		TomCat::Entity grid = scene.CreateEntity("Isometric grid");
+		grid.GetComponent<TomCat::Transform>()._Translation = { 0.0f, 0.0f, 0.0f };
+		auto& gridComponent = grid.AddComponent<TomCat::Grid2D>();
+		gridComponent.Layout = TomCat::GridCellLayout2D::Isometric;
+		TomCat::Entity floor = scene.CreateEntity("Isometric tilemap");
+		scene.SetParent(floor, grid);
+		auto& tilemap = floor.AddComponent<TomCat::Tilemap2D>();
+		TomCat::TilemapCell cell;
+		cell.Coordinate = { 0, 0 };
+		cell.Collision = TomCat::TilemapCollisionMode2D::Solid;
+		TomCat::Tilemap2DRuntime::SetCell(tilemap, cell);
+		TomCat::Tilemap2DRuntime::SetCell(tilemap, [&]()
+		{
+			TomCat::TilemapCell neighbour;
+			neighbour.Coordinate = { 1, 0 };
+			neighbour.Collision = TomCat::TilemapCollisionMode2D::Solid;
+			return neighbour;
+		}());
+		floor.AddComponent<TomCat::TilemapCollider2D>();
+
+		Require(scene.OnRuntimeStart(), "isometric tilemap scene did not start");
+		const auto stats = scene.GetRuntimePhysicsSyncStatistics();
+		Require(stats.TilemapFixturesCreated == 0,
+			"non-Rectangle grids must not generate merged fixtures");
 		scene.OnRuntimeStop();
 	}
 
@@ -7795,6 +7917,9 @@ int main(int argc, char** argv)
 		TestIncrementalFixtureContactContinuity);
 	run("Pause render path and exact single-step", TestPauseRenderPathAndSingleStep);
 	run("collider-only static runtime body", TestColliderOnlyStaticBody);
+	run("Tilemap merged collision generation", TestTilemapCollisionGeneration);
+	run("Tilemap collision rejects non-Rectangle grids",
+		TestTilemapCollisionRejectsNonRectangleGrids);
 	run("CircleCollider2D non-uniform fixture", TestCircleNonUniformScaleFixture);
 	run("authoring/runtime collider outline parity", TestAuthoringAndRuntimeOutlinesMatch);
 	run("Trigger events and managed callbacks", TestTriggerAndManagedCallbacks);

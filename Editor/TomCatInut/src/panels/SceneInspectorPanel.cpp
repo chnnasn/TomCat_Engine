@@ -965,6 +965,17 @@ namespace TomCat {
 	void SceneInspectorPanel::DrawTilemap2DInspector(Tilemap2D& tilemap,
 		Entity entity)
 	{
+		if (entity.HasComponent<TilemapCollider2D>())
+		{
+			Entity parent = m_Shared.Context
+				? m_Shared.Context->GetParent(entity) : Entity{};
+			const Grid2D* grid = parent && parent.HasComponent<Grid2D>()
+				? &parent.GetComponent<Grid2D>() : nullptr;
+			if (!Tilemap2DRuntime::SupportsCollisionMerging(grid))
+				ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f),
+					"Tilemap Collider 2D merges Rectangle grids only; "
+					"this Grid layout generates no runtime fixtures.");
+		}
 		if (ImGui::Button("Open Tile Palette", ImVec2(-1.0f, 0.0f)))
 			m_Authors.m_TilePaletteOpenRequested = true;
 		bool gridChanged = false;
@@ -1019,6 +1030,10 @@ namespace TomCat {
 		int brushRotation = std::clamp(brush.RotationQuarterTurns, 0, 3);
 		if (ImGui::Combo("Rotation", &brushRotation, rotations, 4))
 			brush.RotationQuarterTurns = brushRotation;
+		const char* collisionModes[] = { "None", "Solid", "One Way" };
+		int brushCollision = std::clamp(static_cast<int>(brush.Collision), 0, 2);
+		if (ImGui::Combo("Collision", &brushCollision, collisionModes, 3))
+			brush.Collision = static_cast<TilemapCollisionMode2D>(brushCollision);
 
 		const TilemapCell* occupied = Tilemap2DRuntime::FindCell(tilemap,
 			brush.Coordinate);
@@ -1032,10 +1047,23 @@ namespace TomCat {
 			cell.FlipX = brush.FlipX;
 			cell.FlipY = brush.FlipY;
 			cell.RotationQuarterTurns = brush.RotationQuarterTurns;
+			cell.Collision = brush.Collision;
 			if (Tilemap2DRuntime::SetCell(tilemap, std::move(cell)))
 				m_Shared.MarkModified(true);
 		}
 		ImGui::EndDisabled();
+		ImGui::SameLine();
+		// Collision-only brush: paints the collision mode without touching the
+		// cell's visual data. A cell may also exist without a sprite (handle 0),
+		// which renders nothing but still participates in collider merging.
+		if (ImGui::Button("Set Collision"))
+		{
+			TilemapCell cell = occupied ? *occupied : TilemapCell{};
+			cell.Coordinate = brush.Coordinate;
+			cell.Collision = brush.Collision;
+			if (Tilemap2DRuntime::SetCell(tilemap, std::move(cell)))
+				m_Shared.MarkModified(true);
+		}
 		ImGui::SameLine();
 		ImGui::BeginDisabled(!occupied);
 		if (ImGui::Button("Erase"))
@@ -1051,6 +1079,7 @@ namespace TomCat {
 			brush.FlipX = occupied->FlipX;
 			brush.FlipY = occupied->FlipY;
 			brush.RotationQuarterTurns = occupied->RotationQuarterTurns;
+			brush.Collision = occupied->Collision;
 		}
 		ImGui::EndDisabled();
 
@@ -1331,6 +1360,51 @@ namespace TomCat {
 		ImGui::EndDisabled();
 		if (light.Type == Light2DType::Global)
 			ImGui::TextDisabled("Radius and falloff apply to Point lights.");
+		if (changed)
+			m_Shared.MarkModified();
+	}
+
+	void SceneInspectorPanel::DrawTilemapCollider2DInspector(
+		TilemapCollider2D& collider)
+	{
+		bool changed = false;
+		ImGui::TextDisabled("Merges Collision == Solid cells of this Tilemap 2D "
+			"into static fixtures at Play. Generated fixtures exist only at "
+			"runtime.");
+		if (ImGui::TreeNodeEx("Advanced Filter", ImGuiTreeNodeFlags_SpanAvailWidth))
+		{
+			ImGui::TextDisabled("Category Bits: 0x%04X",
+				static_cast<unsigned int>(collider.CollisionLayer));
+			ImGui::TextDisabled("Mask Bits: 0x%04X",
+				static_cast<unsigned int>(collider.CollisionMask));
+			ImGui::TextWrapped(
+				"Read-only fixture filter data. Both this Category/Mask filter "
+				"and the Entity Layer/Project Physics 2D matrix must allow contact.");
+			ImGui::TreePop();
+		}
+		float friction = collider.Friction;
+		if (ImGui::DragFloat("Friction", &friction, 0.01f, 0.0f, 0.0f)
+			&& std::isfinite(friction))
+		{
+			collider.Friction = std::max(friction, 0.0f);
+			changed = true;
+		}
+		float restitution = collider.Restitution;
+		if (ImGui::DragFloat("Restitution", &restitution, 0.01f, 0.0f, 1.0f,
+			"%.3f", ImGuiSliderFlags_AlwaysClamp)
+			&& std::isfinite(restitution))
+		{
+			collider.Restitution = std::clamp(restitution, 0.0f, 1.0f);
+			changed = true;
+		}
+		float restitutionThreshold = collider.RestitutionThreshold;
+		if (ImGui::DragFloat("Restitution Threshold", &restitutionThreshold,
+			0.01f, 0.0f, 0.0f)
+			&& std::isfinite(restitutionThreshold))
+		{
+			collider.RestitutionThreshold = std::max(restitutionThreshold, 0.0f);
+			changed = true;
+		}
 		if (changed)
 			m_Shared.MarkModified();
 	}
@@ -2613,6 +2687,15 @@ namespace TomCat {
 		{
 			DrawTilemapRenderer2DInspector(component);
 		}, onModified);
+		});
+
+		richInspectors.emplace(ComponentIds::TilemapCollider2D, [&]()
+		{
+		DrawComponent<TilemapCollider2D>("Tilemap Collider 2D", entity,
+			m_Shared.Icons, EditorIcon::BoxCollider2D, [this](auto& component)
+		{
+			DrawTilemapCollider2DInspector(component);
+		}, onModified, m_Shared.ColliderEditingAllowed);
 		});
 
 		richInspectors.emplace(ComponentIds::ParticleSystem2D, [&]()

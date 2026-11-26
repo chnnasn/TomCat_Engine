@@ -566,6 +566,20 @@
         },
         { "name": "Parameters", "propertyId": "0x9f01e00000000003", "kind": "String" }
       ]
+    },
+    {
+      "managedType": "TilemapCollider2D",
+      "stableName": "TomCat.TilemapCollider2D",
+      "typeId": "0x9f00000000000019",
+      "generateProxy": true,
+      "properties": [
+        { "name": "Enabled", "propertyId": "1500", "kind": "Bool" },
+        { "name": "CollisionLayer", "propertyId": "1501", "kind": "UInt32" },
+        { "name": "CollisionMask", "propertyId": "1502", "kind": "UInt32" },
+        { "name": "Friction", "propertyId": "1503", "kind": "Float" },
+        { "name": "Restitution", "propertyId": "1504", "kind": "Float" },
+        { "name": "RestitutionThreshold", "propertyId": "1505", "kind": "Float" }
+      ]
     }
   ]
 }

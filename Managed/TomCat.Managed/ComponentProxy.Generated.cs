@@ -40,6 +40,8 @@ internal static class GeneratedRegisteredComponentProxies
                 static entity => new Light3D(entity)),
             [typeof(Environment3D)] = new(0x9f00000000000018UL,
                 static entity => new Environment3D(entity)),
+            [typeof(TilemapCollider2D)] = new(0x9f00000000000019UL,
+                static entity => new TilemapCollider2D(entity)),
             [typeof(TextRenderer)] = new(0x9f01000000000001UL,
                 static entity => new TextRenderer(entity)),
             [typeof(Canvas)] = new(0x9f01000000000002UL,
@@ -907,6 +909,57 @@ public sealed partial class Environment3D : IEntityComponent
         get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x0000000000000710UL);
         set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
             0x0000000000000710UL, value);
+    }
+}
+
+[RegisteredComponent(0x9f00000000000019UL)]
+public sealed partial class TilemapCollider2D : IEntityComponent
+{
+    public const ulong RegisteredTypeId = 0x9f00000000000019UL;
+
+    internal TilemapCollider2D(Entity entity) => Entity = entity;
+    public Entity Entity { get; }
+
+    public bool Enabled
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000005dcUL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000005dcUL, value);
+    }
+
+    public uint CollisionLayer
+    {
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x00000000000005ddUL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x00000000000005ddUL, value);
+    }
+
+    public uint CollisionMask
+    {
+        get => RegisteredComponentProperties.GetUInt32(Entity, RegisteredTypeId, 0x00000000000005deUL);
+        set => RegisteredComponentProperties.SetUInt32(Entity, RegisteredTypeId,
+            0x00000000000005deUL, value);
+    }
+
+    public float Friction
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000005dfUL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000005dfUL, value);
+    }
+
+    public float Restitution
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000005e0UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000005e0UL, value);
+    }
+
+    public float RestitutionThreshold
+    {
+        get => RegisteredComponentProperties.GetFloat(Entity, RegisteredTypeId, 0x00000000000005e1UL);
+        set => RegisteredComponentProperties.SetFloat(Entity, RegisteredTypeId,
+            0x00000000000005e1UL, value);
     }
 }
 

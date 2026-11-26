@@ -3,7 +3,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace TomCat {
 
@@ -94,6 +97,7 @@ namespace TomCat {
 			{
 				if (found->SpriteHandle == cell.SpriteHandle && found->Tint == cell.Tint
 					&& found->FlipX == cell.FlipX && found->FlipY == cell.FlipY
+					&& found->Collision == cell.Collision
 					&& found->RotationQuarterTurns == cell.RotationQuarterTurns)
 					return false;
 				*found = std::move(cell);
@@ -170,6 +174,76 @@ namespace TomCat {
 				|| sortOrder == TilemapSortOrder2D::TopRight)
 				y = ~y;
 			return (static_cast<uint64_t>(y) << 32) | x;
+		}
+
+		bool SupportsCollisionMerging(const Grid2D* grid)
+		{
+			return !grid || grid->Layout == GridCellLayout2D::Rectangle;
+		}
+
+		std::vector<CollisionRect2D> GenerateCollisionRects(
+			const Tilemap2D& tilemap, const Grid2D* grid)
+		{
+			std::vector<CollisionRect2D> rects;
+			if (!SupportsCollisionMerging(grid))
+				return rects;
+
+			// Coordinate order is made explicit here so the merge output does not
+			// depend on the sparse vector's incidental order.
+			std::vector<glm::ivec2> origins;
+			origins.reserve(tilemap.Cells.size());
+			for (const TilemapCell& cell : tilemap.Cells)
+				if (cell.Collision == TilemapCollisionMode2D::Solid)
+					origins.push_back(cell.Coordinate);
+			std::sort(origins.begin(), origins.end(),
+				[](const glm::ivec2& left, const glm::ivec2& right)
+				{
+					return left.y != right.y ? left.y < right.y
+						: left.x < right.x;
+				});
+			origins.erase(std::unique(origins.begin(), origins.end()),
+				origins.end());
+
+			std::unordered_set<uint64_t> covered;
+			covered.reserve(origins.size() * 2 + 1);
+			const auto expandable = [&origins, &covered](glm::ivec2 coordinate)
+			{
+				return std::binary_search(origins.begin(), origins.end(),
+					coordinate, [](const glm::ivec2& left, const glm::ivec2& right)
+					{
+						return left.y != right.y ? left.y < right.y
+							: left.x < right.x;
+					})
+					&& !covered.contains(CoordinateKey(coordinate));
+			};
+
+			for (const glm::ivec2& origin : origins)
+			{
+				if (covered.contains(CoordinateKey(origin)))
+					continue;
+				glm::ivec2 max = origin;
+				while (max.x < std::numeric_limits<int32_t>::max()
+					&& expandable({ max.x + 1, max.y }))
+					++max.x;
+				while (max.y < std::numeric_limits<int32_t>::max())
+				{
+					bool rowFull = true;
+					for (int32_t x = origin.x; x <= max.x; ++x)
+						if (!expandable({ x, max.y + 1 }))
+						{
+							rowFull = false;
+							break;
+						}
+					if (!rowFull)
+						break;
+					++max.y;
+				}
+				rects.push_back(CollisionRect2D{ origin, max });
+				for (int32_t y = origin.y; y <= max.y; ++y)
+					for (int32_t x = origin.x; x <= max.x; ++x)
+						covered.insert(CoordinateKey({ x, y }));
+			}
+			return rects;
 		}
 	}
 
