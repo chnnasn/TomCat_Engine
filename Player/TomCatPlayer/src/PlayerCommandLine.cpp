@@ -2,6 +2,8 @@
 
 #include <TomCat/Utils/PathUtils.h>
 
+#include <cmath>
+#include <cstdlib>
 #include <string_view>
 #include <vector>
 
@@ -47,40 +49,100 @@ namespace TomCat {
 			return result;
 		}
 
-		// Run mode: each option at most once, each with a non-empty value.
+		// Run mode. Each option appears at most once except --test-arg.
 		bool sawPackage = false;
-		for (int index = 1; index < args.Count; ++index)
+		bool sawFrames = false;
+		bool sawFixedDelta = false;
+		const auto parsePositive = [](std::string_view text, double maximum,
+			double& value)
+		{
+			if (text.empty() || text.size() > 32)
+				return false;
+			const std::string copy(text);
+			char* end = nullptr;
+			value = std::strtod(copy.c_str(), &end);
+			return end == copy.c_str() + copy.size() && std::isfinite(value)
+				&& value > 0.0 && value <= maximum;
+		};
+		for (int index = 1; index < args.Count && result.Error.empty(); ++index)
 		{
 			const std::string_view name = args[index] ? args[index] : "";
-			const bool known = name == "--package" || name == "--render-diag";
-			if (!known || index + 1 >= args.Count)
+			if (name == "--headless")
+			{
+				if (result.Headless)
+					result.Error = "--headless was given more than once";
+				result.Headless = true;
+				continue;
+			}
+			const bool takesValue = name == "--package" || name == "--render-diag"
+				|| name == "--screenshot" || name == "--frames"
+				|| name == "--fixed-delta" || name == "--test-arg";
+			if (!takesValue || index + 1 >= args.Count)
 			{
 				result.Error = "unsupported or incomplete command line";
 				break;
 			}
 			++index;
-			const std::filesystem::path value = UTF8ToPath(args[index] ? args[index] : "");
-			if (value.empty())
+			const std::string_view text = args[index] ? args[index] : "";
+			if (text.empty())
 			{
 				result.Error = name == "--package"
 					? "the package path cannot be empty"
-					: "--render-diag requires a non-empty path";
+					: std::string(name) + " requires a non-empty value";
 				break;
 			}
-			std::filesystem::path& target = name == "--package"
-				? result.PackagePath : result.RenderDiagnosticsPath;
+			if (name == "--frames")
+			{
+				double frames = 0.0;
+				if (sawFrames || !parsePositive(text, 1000000.0, frames)
+					|| frames != static_cast<double>(static_cast<uint32_t>(frames)))
+					result.Error = sawFrames ? "--frames was given more than once"
+						: "--frames requires a whole number from 1 to 1000000";
+				result.Frames = static_cast<uint32_t>(frames);
+				sawFrames = true;
+				continue;
+			}
+			if (name == "--fixed-delta")
+			{
+				double seconds = 0.0;
+				if (sawFixedDelta || !parsePositive(text, 1.0, seconds))
+					result.Error = sawFixedDelta ? "--fixed-delta was given more than once"
+						: "--fixed-delta requires seconds in (0, 1]";
+				result.FixedDelta = static_cast<float>(seconds);
+				sawFixedDelta = true;
+				continue;
+			}
+			if (name == "--test-arg")
+			{
+				const size_t equals = text.find('=');
+				const std::string key(text.substr(0, equals));
+				if (key.empty() || key.size() > 128)
+				{
+					result.Error = "--test-arg requires key or key=value with a key of 1-128 bytes";
+					break;
+				}
+				if (!result.TestArguments.emplace(key, equals == std::string_view::npos
+					? std::string() : std::string(text.substr(equals + 1))).second)
+					result.Error = "--test-arg " + key + " was given more than once";
+				continue;
+			}
+			std::filesystem::path& target = name == "--package" ? result.PackagePath
+				: name == "--render-diag" ? result.RenderDiagnosticsPath
+				: result.ScreenshotPath;
 			if (!target.empty())
 			{
 				result.Error = std::string(name) + " was given more than once";
 				break;
 			}
-			target = value;
+			target = UTF8ToPath(std::string(text));
 			sawPackage = sawPackage || name == "--package";
 		}
 		if (result.Error.empty())
 		{
 			if (!sawPackage)
 				result.PackagePath = "Game.tcpak";
+			if (!result.ScreenshotPath.empty() && result.Frames == 0)
+				result.Frames = 60;
 			return result;
 		}
 
@@ -138,9 +200,15 @@ namespace TomCat {
 			"Usage:\n"
 			"  TomCatPlayer                          Run Game.tcpak beside the executable\n"
 			"  TomCatPlayer --package <path>         Run a cooked package\n"
-			"  TomCatPlayer [--package <path>] --render-diag <file.json>\n"
-			"                                        Also write 2D render diagnostics\n"
-			"                                        (counts, view bounds, draw order)\n"
+			"\n"
+			"Run options (combine with --package; any order):\n"
+			"  --render-diag <file.json>   Write 2D render diagnostics about once a second\n"
+			"  --screenshot <out.png>      Save frame --frames N (default 60) as PNG, then exit\n"
+			"  --frames <N>                Exit after N frames\n"
+			"  --headless                  Render into a hidden window (no focus or occlusion)\n"
+			"  --fixed-delta <seconds>     Advance every frame by a fixed time step\n"
+			"  --test-arg <key[=value]>    Test hook read by Application.GetTestArgument\n"
+			"                              (repeatable)\n"
 			"  TomCatPlayer --validate-package <path> Validate package and private runtime, then exit\n"
 			"  TomCatPlayer --version                Print compatibility versions\n"
 			"  TomCatPlayer --help                   Show this help\n";

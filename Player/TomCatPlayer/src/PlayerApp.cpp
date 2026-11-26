@@ -255,6 +255,16 @@ namespace TomCat {
 				settings.ProductName, settings.Version, settings.CompanyName,
 				PathToUTF8(dataPaths->Root));
 			plan.CreateWindow = !IsHeadlessPlayerSmokeRequested();
+			// --headless keeps a real graphics context in a hidden window, so
+			// rendering and screenshots work without focus or occlusion issues.
+			if (plan.Command.Headless)
+				plan.Window.Visible = false;
+			if (!plan.CreateWindow && !plan.Command.ScreenshotPath.empty())
+			{
+				plan.Error = "--screenshot needs a graphics context; use --headless "
+					"instead of TOMCAT_E2E_PLAYER_HEADLESS";
+				plan.ErrorCode = 2;
+			}
 			if (!plan.CreateWindow)
 				TC_Core_Info("Running the Player end-to-end smoke without a graphics window");
 			return plan;
@@ -293,9 +303,28 @@ namespace TomCat {
 							if (!currentError)
 								diagnosticsPath = (current / diagnosticsPath).lexically_normal();
 						}
+						const auto resolveFromLaunchDirectory =
+							[](std::filesystem::path path)
+						{
+							if (!path.empty() && path.is_relative())
+							{
+								std::error_code currentError;
+								const auto current = std::filesystem::current_path(currentError);
+								if (!currentError)
+									path = (current / path).lexically_normal();
+							}
+							return path;
+						};
+						PlayerAutomationOptions automation;
+						automation.RenderDiagnosticsPath = std::move(diagnosticsPath);
+						automation.ScreenshotPath =
+							resolveFromLaunchDirectory(command.ScreenshotPath);
+						automation.Frames = command.Frames;
+						SetTestArguments(command.TestArguments);
+						SetFixedFrameDelta(command.FixedDelta);
 						PushLayer(new PlayerRuntimeLayer(plan.PackagePath,
 							plan.ViewportWidth, plan.ViewportHeight,
-							std::move(diagnosticsPath)));
+							std::move(automation)));
 						break;
 					}
 					case PlayerCommandMode::ValidatePackage:

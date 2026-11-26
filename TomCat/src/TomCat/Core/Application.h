@@ -1,4 +1,7 @@
 #pragma once
+
+#include <map>
+#include <string>
 #include "Base.h"
 
 #include "Window.h"
@@ -56,6 +59,24 @@ namespace TomCat {
 		bool HasWindow() const { return m_Window != nullptr; }
 
 		void Close(int exitCode = 0);
+
+		// Key/value pairs from the Player's --test-arg options. Scripts read them
+		// through Application.GetTestArgument to drive engine-level test hooks
+		// (auto-load a level, skip menus) without ad-hoc environment variables.
+		void SetTestArguments(std::map<std::string, std::string> arguments)
+		{
+			m_TestArguments = std::move(arguments);
+		}
+		const std::map<std::string, std::string>& GetTestArguments() const
+		{
+			return m_TestArguments;
+		}
+
+		// When set (> 0), every frame advances by exactly this many seconds
+		// instead of wall-clock time, so frame N is reproducible for screenshots
+		// and E2E checks. Zero restores wall-clock timing.
+		void SetFixedFrameDelta(float seconds) { m_FixedFrameDelta = seconds > 0.0f ? seconds : 0.0f; }
+		float GetFixedFrameDelta() const { return m_FixedFrameDelta; }
 		int GetExitCode() const { return m_ExitCode; }
 
 		// Host-driven frame entry for browser requestAnimationFrame and embedded players.
@@ -83,6 +104,8 @@ namespace TomCat {
 		int m_ExitCode = 0;
 		LayerStack m_LayerStack;
 		float m_LastFrameTime = 0.0f;
+		std::map<std::string, std::string> m_TestArguments;
+		float m_FixedFrameDelta = 0.0f;
 
 	private:
 		static Application* s_Instance;

@@ -190,7 +190,7 @@ namespace TomCat {
 			const float time = static_cast<float>(m_Window->GetTimeSeconds());
 			const float delta = time - m_LastFrameTime;
 			m_LastFrameTime = time;
-			Tick(delta);
+			Tick(m_FixedFrameDelta > 0.0f ? m_FixedFrameDelta : delta);
 		}
 	}
 

@@ -7,6 +7,8 @@
 #include <TomCat/Module/ModuleSystem.h>
 #include <TomCat/Utils/FileSystemUtils.h>
 #include <TomCat/Utils/PathUtils.h>
+#include <TomCat/Utils/PngWriter.h>
+#include <TomCat/Renderer/Framebuffer.h>
 
 #include <system_error>
 
@@ -172,10 +174,12 @@ namespace TomCat {
 
 	PlayerRuntimeLayer::PlayerRuntimeLayer(std::filesystem::path packagePath,
 		uint32_t viewportWidth, uint32_t viewportHeight,
-		std::filesystem::path renderDiagnosticsPath)
+		PlayerAutomationOptions automation)
 		: Layer("PlayerRuntimeLayer"), m_PackagePath(std::move(packagePath)),
 		m_ViewportWidth(viewportWidth), m_ViewportHeight(viewportHeight),
-		m_RenderDiagnosticsPath(std::move(renderDiagnosticsPath))
+		m_RenderDiagnosticsPath(std::move(automation.RenderDiagnosticsPath)),
+		m_ScreenshotPath(std::move(automation.ScreenshotPath)),
+		m_ExitAfterFrames(automation.Frames)
 	{
 	}
 
@@ -283,6 +287,27 @@ namespace TomCat {
 		if (!m_RenderDiagnosticsPath.empty() && (m_Frame % 60) == 0)
 			WriteRenderDiagnostics();
 		++m_Frame;
+		if (m_ExitAfterFrames != 0 && m_Frame >= m_ExitAfterFrames
+			&& m_SceneManager)
+		{
+			int exitCode = 0;
+			if (!m_ScreenshotPath.empty())
+			{
+				std::string error;
+				if (WriteScreenshot(error))
+					TC_Core_Info("Screenshot of frame {0} written to '{1}'", m_Frame,
+						PathToUTF8(m_ScreenshotPath));
+				else
+				{
+					TC_Core_Error("TomCat Player: screenshot failed: {0}", error);
+					exitCode = 8;
+				}
+			}
+			if (!m_RenderDiagnosticsPath.empty())
+				WriteRenderDiagnostics();
+			m_ExitAfterFrames = 0;
+			Application::Get().Close(exitCode);
+		}
 		if (!m_SceneManager->CommitPendingTransition()
 			&& !m_SceneManager->GetActiveScene())
 			Fail("Scene transition failed without a recoverable active Scene: "
@@ -308,6 +333,71 @@ namespace TomCat {
 					event.GetScreenToFramebufferScaleY() });
 		}
 		return false;
+	}
+
+	bool PlayerRuntimeLayer::WriteScreenshot(std::string& error)
+	{
+		const Ref<Scene> scene = m_SceneManager ? m_SceneManager->GetActiveScene() : nullptr;
+		if (!scene || !Application::Get().HasWindow())
+		{
+			error = "no active scene or graphics context";
+			return false;
+		}
+		Window& window = Application::Get().GetWindow();
+		const uint32_t width = window.GetFramebufferWidth();
+		const uint32_t height = window.GetFramebufferHeight();
+		if (width == 0 || height == 0)
+		{
+			error = "the window framebuffer is empty (minimized?)";
+			return false;
+		}
+		// Re-render the frame that was just simulated into an offscreen target:
+		// back-buffer readback is not portable across OpenGL and Vulkan, and an
+		// offscreen target is immune to window occlusion and DPI capture issues.
+		FramebufferSpecification specification;
+		specification.Attachments = { FramebufferTextureFormat::RGBA8,
+			FramebufferTextureFormat::Depth };
+		specification.Width = width;
+		specification.Height = height;
+		const Ref<Framebuffer> target = Framebuffer::Create(specification);
+		if (!target)
+		{
+			error = "could not create a capture framebuffer";
+			return false;
+		}
+		std::vector<uint8_t> pixels;
+		target->Bind();
+		bool read = false;
+		try
+		{
+			scene->OnRenderRuntime();
+			read = target->ReadColorAttachment(0, pixels);
+		}
+		catch (...)
+		{
+			target->Unbind();
+			throw;
+		}
+		target->Unbind();
+		if (!read)
+		{
+			error = "framebuffer readback failed";
+			return false;
+		}
+		// Screenshots are opaque, like what the window shows.
+		for (size_t alpha = 3; alpha < pixels.size(); alpha += 4)
+			pixels[alpha] = 255;
+		const std::vector<uint8_t> png = EncodePngRGBABottomUp(width, height, pixels);
+		if (png.empty())
+		{
+			error = "PNG encoding failed";
+			return false;
+		}
+		std::error_code directoryError;
+		if (m_ScreenshotPath.has_parent_path())
+			std::filesystem::create_directories(m_ScreenshotPath.parent_path(), directoryError);
+		return FileSystem::WriteFileAtomically(m_ScreenshotPath, std::string_view(
+			reinterpret_cast<const char*>(png.data()), png.size()), error);
 	}
 
 	void PlayerRuntimeLayer::WriteRenderDiagnostics()
