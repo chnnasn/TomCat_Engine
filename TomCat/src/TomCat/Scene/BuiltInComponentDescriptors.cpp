@@ -2354,7 +2354,10 @@ namespace TomCat {
 					0.0f, 100000.0f, false),
 				ColorProperty<PixelPerfectCamera2D>(
 					ComponentIds::PixelPerfectCamera2DProperties::LetterboxColor,
-					"LetterboxColor", &PixelPerfectCamera2D::LetterboxColor)
+					"LetterboxColor", &PixelPerfectCamera2D::LetterboxColor),
+				BoolProperty<PixelPerfectCamera2D>(
+					ComponentIds::PixelPerfectCamera2DProperties::SnapToScreenPixels,
+					"SnapToScreenPixels", &PixelPerfectCamera2D::SnapToScreenPixels)
 			};
 			return descriptor;
 		}

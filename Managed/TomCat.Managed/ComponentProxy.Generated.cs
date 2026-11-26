@@ -1134,6 +1134,14 @@ public sealed partial class PixelPerfectCamera2D : IEntityComponent
         set => RegisteredComponentProperties.SetColor(Entity, RegisteredTypeId,
             0x00000000000006a8UL, value);
     }
+
+    /// <summary>Snap camera and sprite motion to output pixels at integer zoom.</summary>
+    public bool SnapToScreenPixels
+    {
+        get => RegisteredComponentProperties.GetBool(Entity, RegisteredTypeId, 0x00000000000006a9UL);
+        set => RegisteredComponentProperties.SetBool(Entity, RegisteredTypeId,
+            0x00000000000006a9UL, value);
+    }
 }
 
 [RegisteredComponent(0x9f01000000000001UL)]

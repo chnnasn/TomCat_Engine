@@ -305,9 +305,10 @@ Application.Quit(0);
 - `ReferenceWidth` × `ReferenceHeight`：可见的参考像素分辨率（如 320×180）。
 - `PixelsPerUnit`：每世界单位的参考像素数，应与 sprite 的 PPU 一致。
 - `LetterboxColor`：整数缩放后剩余屏幕的黑边颜色。
+- 勾选 `SnapToScreenPixels` 时，相机和精灵按渲染目标的单个像素移动。例如 4 倍放大时，对齐步长从 4 个输出像素降为 1 个。
 
 开启后视野按能放下的最大整数倍缩放（1440×810 窗口、320×180 参考 → 4 倍，
-居中 1280×720），OrthographicSize 被忽略。相机和 sprite/tile 的平移吸附到
+居中 1280×720），OrthographicSize 被忽略。默认情况下，相机和 sprite/tile 的平移吸附到
 `1/PPU` 网格，UV 内缩百分之一个纹素防止图集缝隙。像素风纹理要同时设
 `filterMode: Nearest`。窗口比参考分辨率还小时按 1 倍显示并裁剪。
 

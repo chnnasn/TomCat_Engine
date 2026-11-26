@@ -19,7 +19,7 @@ namespace TomCat {
 	PixelPerfectFrame ComputePixelPerfectFrame(uint32_t viewportWidth,
 		uint32_t viewportHeight, uint32_t referenceWidth, uint32_t referenceHeight,
 		float pixelsPerUnit, const glm::mat4& cameraTransform, float nearClip,
-		float farClip)
+		float farClip, bool snapToScreenPixels)
 	{
 		PixelPerfectFrame frame;
 		if (viewportWidth == 0 || viewportHeight == 0 || referenceWidth == 0
@@ -47,6 +47,9 @@ namespace TomCat {
 		const float top = bottom + viewportHeight * unitsPerScreenPixel;
 		// Same handedness and depth convention as SceneCamera's orthographic path.
 		frame.Projection = glm::orthoLH_NO(left, right, bottom, top, nearClip, farClip);
+
+		if (snapToScreenPixels)
+			frame.WorldUnitsPerPixel = unitsPerScreenPixel;
 
 		frame.CameraTransform = cameraTransform;
 		const glm::vec3 snapped = SnapToPixelGrid(glm::vec3(cameraTransform[3]),

@@ -214,6 +214,7 @@ namespace TomCat {
 			inline constexpr uint64_t ReferenceHeight = 1702;
 			inline constexpr uint64_t PixelsPerUnit = 1703;
 			inline constexpr uint64_t LetterboxColor = 1704;
+			inline constexpr uint64_t SnapToScreenPixels = 1705;
 		}
 		namespace PostProcess2DProperties {
 			inline constexpr uint64_t Enabled = 1600;

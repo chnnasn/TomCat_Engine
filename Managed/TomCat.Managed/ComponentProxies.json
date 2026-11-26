@@ -615,7 +615,8 @@
         { "name": "ReferenceWidth", "propertyId": "1701", "kind": "UInt32", "summary": "Visible width in reference pixels (1-8192)." },
         { "name": "ReferenceHeight", "propertyId": "1702", "kind": "UInt32", "summary": "Visible height in reference pixels (1-8192)." },
         { "name": "PixelsPerUnit", "propertyId": "1703", "kind": "Float", "summary": "Reference pixels per world unit; positions snap to 1 / PixelsPerUnit." },
-        { "name": "LetterboxColor", "propertyId": "1704", "kind": "Color" }
+        { "name": "LetterboxColor", "propertyId": "1704", "kind": "Color" },
+        { "name": "SnapToScreenPixels", "propertyId": "1705", "kind": "Bool", "summary": "Snap camera and sprite motion to output pixels at integer zoom." }
       ]
     }
   ]

@@ -312,7 +312,7 @@ namespace {
 		RequireDescriptor(TomCat::ComponentIds::TilemapCollider2D,
 			"TomCat.TilemapCollider2D", 6);
 		RequireDescriptor(TomCat::ComponentIds::PostProcess2D,
-			"TomCat.PostProcess2D", 15);
+			"TomCat.PostProcess2D", 16);
 
 		auto scene = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity entity = scene->CreateEntityWithUUID(
@@ -615,7 +615,7 @@ namespace {
 			&& descriptor->Encode && descriptor->Decode
 			&& descriptor->InspectorVisible && descriptor->UseGenericInspector
 			&& descriptor->AddableInInspector,
-			"Advanced 2D component descriptor is incomplete");
+			("Incomplete descriptor: " + std::string(stableName)).c_str());
 		return *descriptor;
 	}
 
@@ -904,6 +904,13 @@ namespace {
 			("One reference pixel must span exactly Scale screen pixels, got "
 				+ std::to_string(step.x) + " x " + std::to_string(step.y)).c_str());
 
+		const auto fine = ComputePixelPerfectFrame(1440, 810, 320, 180,
+			100.0f, camera, 0.0f, 100.0f, true);
+		Require(fine.ContentWidth == frame.ContentWidth && fine.Projection == frame.Projection
+			&& Near(fine.WorldUnitsPerPixel, 0.0025f)
+			&& Near(fine.CameraTransform[3].x, 1.235f),
+			"Screen-pixel snapping must preserve framing at integer zoom");
+
 		// Smaller than the reference: scale 1 and crop, still valid.
 		frame = ComputePixelPerfectFrame(200, 100, 320, 180, 100.0f, camera, 0.0f, 100.0f);
 		Require(frame.Valid && frame.Scale == 1 && frame.ContentWidth == 200
@@ -920,7 +927,7 @@ namespace {
 
 		// Component descriptor, validation and round trip.
 		RequireDescriptor(TomCat::ComponentIds::PixelPerfectCamera2D,
-			"TomCat.PixelPerfectCamera2D", 5);
+			"TomCat.PixelPerfectCamera2D", 6);
 		auto scene = TomCat::CreateRef<TomCat::Scene>();
 		TomCat::Entity entity = scene->CreateEntityWithUUID(
 			TomCat::UUID(0x20260000000000f7ULL), "Pixel camera");
@@ -944,6 +951,7 @@ namespace {
 			&& width.Set(entity, TomCat::PropertyValue(uint32_t(480)), error),
 			"ReferenceWidth must accept 1-8192 pixels only");
 		auto& pixel = entity.GetComponent<TomCat::PixelPerfectCamera2D>();
+		pixel.SnapToScreenPixels = true;
 		pixel.ReferenceHeight = 270;
 		pixel.PixelsPerUnit = 16.0f;
 		pixel.LetterboxColor = { 0.1f, 0.2f, 0.3f, 1.0f };
@@ -957,7 +965,7 @@ namespace {
 			"Pixel camera scene decode failed");
 		const auto& loaded = decoded->FindEntityByUUID(entity.GetUUID())
 			.GetComponent<TomCat::PixelPerfectCamera2D>();
-		Require(loaded.Enabled && loaded.ReferenceWidth == 480 && loaded.ReferenceHeight == 270
+		Require(loaded.Enabled && loaded.SnapToScreenPixels && loaded.ReferenceWidth == 480 && loaded.ReferenceHeight == 270
 			&& loaded.PixelsPerUnit == 16.0f && loaded.LetterboxColor == pixel.LetterboxColor,
 			"PixelPerfectCamera2D values did not round-trip");
 	}

@@ -36,7 +36,7 @@ namespace TomCat {
 	[[nodiscard]] PixelPerfectFrame ComputePixelPerfectFrame(uint32_t viewportWidth,
 		uint32_t viewportHeight, uint32_t referenceWidth, uint32_t referenceHeight,
 		float pixelsPerUnit, const glm::mat4& cameraTransform, float nearClip,
-		float farClip);
+		float farClip, bool snapToScreenPixels = false);
 
 	// Rounds a world-space translation to the nearest multiple of unitsPerPixel.
 	[[nodiscard]] glm::vec3 SnapToPixelGrid(const glm::vec3& position, float unitsPerPixel);

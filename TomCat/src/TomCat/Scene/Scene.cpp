@@ -4672,7 +4672,7 @@ namespace TomCat {
 						m_ViewportHeight, pixel.ReferenceWidth, pixel.ReferenceHeight,
 						pixel.PixelsPerUnit, cameraTransform,
 						camera._Camera.GetOrthographicNearClip(),
-						camera._Camera.GetOrthographicFarClip());
+						camera._Camera.GetOrthographicFarClip(), pixel.SnapToScreenPixels);
 				if (pixelFrame.Valid)
 				{
 					projection = pixelFrame.Projection;

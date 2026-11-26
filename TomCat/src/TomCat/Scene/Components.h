@@ -526,6 +526,7 @@ namespace TomCat {
 	struct PixelPerfectCamera2D
 	{
 		bool Enabled = true;
+		bool SnapToScreenPixels = false;
 		uint32_t ReferenceWidth = 320;
 		uint32_t ReferenceHeight = 180;
 		float PixelsPerUnit = 100.0f;
