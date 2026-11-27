@@ -579,6 +579,20 @@ namespace TomCat {
                 options.es = false;
                 options.vulkan_semantics = false;
                 compiler.set_common_options(options);
+                // Old GL 4.5 drivers (2017-era Intel laptop drivers) reject an
+                // explicit `location` combined with `binding` on opaque uniforms.
+                // Explicit locations only matter to native SPIR-V specialization,
+                // so drop them here and re-read the driver-assigned locations
+                // after linking.
+                const spirv_cross::ShaderResources resources = compiler.get_shader_resources();
+                for (const auto& resource : resources.sampled_images)
+                    compiler.unset_decoration(resource.id, spv::DecorationLocation);
+                for (const auto& resource : resources.storage_images)
+                    compiler.unset_decoration(resource.id, spv::DecorationLocation);
+                for (const auto& resource : resources.separate_images)
+                    compiler.unset_decoration(resource.id, spv::DecorationLocation);
+                for (const auto& resource : resources.separate_samplers)
+                    compiler.unset_decoration(resource.id, spv::DecorationLocation);
                 glslSources.emplace(stage, compiler.compile());
             }
         }
@@ -645,6 +659,15 @@ namespace TomCat {
 		{
 			glDetachShader(program, id);
 			glDeleteShader(id);
+		}
+
+		if (!glSpecializeShader)
+		{
+			// The transpiled sources omit explicit locations on opaque uniforms,
+			// so the driver assigned its own while linking. Replace the artifact's
+			// baked-in SPIR-V locations with the real ones before any upload.
+			for (auto& [name, location] : m_UniformLocations)
+				location = glGetUniformLocation(program, name.c_str());
 		}
 
 		m_RendererID = program;

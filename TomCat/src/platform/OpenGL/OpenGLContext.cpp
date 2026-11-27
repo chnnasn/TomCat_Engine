@@ -25,13 +25,10 @@ namespace TomCat {
 		int status = gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 		if (!status)
 			throw std::runtime_error("Failed to initialize Glad");
-#ifdef TC_PLATFORM_LINUX
+        // GL 4.6 only adds native SPIR-V shader specialization; without it
+        // OpenGLShader::CreateProgram transpiles SPIR-V to GLSL 450 instead.
         if (!GLAD_GL_VERSION_4_5)
             throw std::runtime_error("TomCat requires OpenGL 4.5 or newer");
-#else
-        if (!GLAD_GL_VERSION_4_6)
-			throw std::runtime_error("TomCat requires OpenGL 4.6 for SPIR-V shader specialization");
-#endif
 
 		TC_Core_Info("OpenGL Info");
 		TC_Core_Info("Vendor: {0}", reinterpret_cast<const char*>(glGetString(GL_VENDOR)));

@@ -33,10 +33,36 @@
 namespace TomCat {
 
 #ifdef TC_PLATFORM_LINUX
-    static constexpr int DesktopOpenGLMinorVersion = 5;
+    static constexpr int DesktopOpenGLMinorVersions[] = { 5 };
 #else
-    static constexpr int DesktopOpenGLMinorVersion = 6;
+    // Prefer 4.6 for native SPIR-V shader specialization; drivers without it
+    // (NVIDIA older than 411.63, old Intel laptop drivers) retry with the 4.5
+    // that the spirv_cross transpile path in OpenGLShader::CreateProgram targets.
+    static constexpr int DesktopOpenGLMinorVersions[] = { 6, 5 };
 #endif
+
+    // Requests a desktop GL core context, stepping down the minor version list
+    // until the driver accepts one. Returns null only when every version fails.
+    static GLFWwindow* CreateDesktopGLWindow(int width, int height, const char* title, GLFWmonitor* monitor)
+    {
+        GLFWwindow* window = nullptr;
+        for (const int minor : DesktopOpenGLMinorVersions)
+        {
+            glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, minor);
+            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+            window = glfwCreateWindow(width, height, title, monitor, nullptr);
+            if (window)
+            {
+                if (minor != DesktopOpenGLMinorVersions[0])
+                    TC_Core_Warn("Renderer: OpenGL context downgraded to 4.{0} core; 4.{1} unavailable",
+                        minor, DesktopOpenGLMinorVersions[0]);
+                return window;
+            }
+        }
+        return nullptr;
+    }
 
 #ifdef TC_PLATFORM_WINDOWS
     static LRESULT CALLBACK RuntimeIMEProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
@@ -197,11 +223,6 @@ namespace TomCat {
         glfwWindowHint(GLFW_VISIBLE, props.Visible ? GLFW_TRUE : GLFW_FALSE);
         if (initialBackend == RendererAPI::API::Vulkan)
             glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        else {
-            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, DesktopOpenGLMinorVersion);
-            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        }
 		glfwWindowHint(GLFW_MAXIMIZED, props.DisplayMode == WindowDisplayMode::MaximizedWindow);
 		glfwWindowHint(GLFW_RESIZABLE,
 			props.DisplayMode == WindowDisplayMode::Borderless
@@ -259,16 +280,18 @@ namespace TomCat {
         }
         {
             TC_PROFILE_SCOPE("glfwCreateWindow");
-            m_Window = glfwCreateWindow(windowWidth, windowHeight,
-				m_Data.Title.c_str(), monitor, nullptr);
-			if (!m_Window)
-			{
-				if (s_GLFWWindowCount == 0)
-					glfwTerminate();
-				throw std::runtime_error("Failed to create GLFW window");
-			}
-			++s_GLFWWindowCount;
-		}
+            m_Window = initialBackend == RendererAPI::API::Vulkan
+                ? glfwCreateWindow(windowWidth, windowHeight,
+                    m_Data.Title.c_str(), monitor, nullptr)
+                : CreateDesktopGLWindow(windowWidth, windowHeight, m_Data.Title.c_str(), monitor);
+            if (!m_Window)
+            {
+                if (s_GLFWWindowCount == 0)
+                    glfwTerminate();
+                throw std::runtime_error("Failed to create GLFW window");
+            }
+            ++s_GLFWWindowCount;
+        }
 		GLFWWindowInitializationGuard initializationGuard(m_Window, m_Context);
 		try {
 			m_Context = GraphicsContext::Create(m_Window);
@@ -280,11 +303,7 @@ namespace TomCat {
 			m_Context.reset();
 			glfwDestroyWindow(m_Window);
 			m_Window = nullptr;
-			glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-			glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-			glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, DesktopOpenGLMinorVersion);
-			glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-			m_Window = glfwCreateWindow(windowWidth, windowHeight, m_Data.Title.c_str(), monitor, nullptr);
+			m_Window = CreateDesktopGLWindow(windowWidth, windowHeight, m_Data.Title.c_str(), monitor);
 			if (!m_Window) throw std::runtime_error("Failed to create OpenGL fallback window");
 			m_Context = GraphicsContext::Create(m_Window);
 			m_Context->Init();
