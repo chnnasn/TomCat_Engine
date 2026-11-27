@@ -6,6 +6,15 @@ public sealed class SerializeFieldAttribute : Attribute;
 [AttributeUsage(AttributeTargets.Field)]
 public sealed class HideInInspectorAttribute : Attribute;
 
+/// <summary>Checks an Entity or GameObject field against the current scene.
+/// Any listed script type satisfies the target constraint.</summary>
+[AttributeUsage(AttributeTargets.Field)]
+public sealed class SceneReferenceAttribute(params Type[] scripts) : Attribute
+{
+    public Type[] Scripts { get; } = scripts;
+    public bool Required { get; set; }
+}
+
 [AttributeUsage(AttributeTargets.Field)]
 public sealed class HeaderAttribute(string text) : Attribute
 {

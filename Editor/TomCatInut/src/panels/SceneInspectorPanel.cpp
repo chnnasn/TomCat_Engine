@@ -1761,6 +1761,13 @@ namespace TomCat {
 					draw->AddRectFilled(fieldMin, fieldMax, ImGui::GetColorU32(ImGuiCol_FrameBg), ImGui::GetStyle().FrameRounding);
 					draw->AddRect(fieldMin, fieldMax, ImGui::GetColorU32(ImGuiCol_Border), ImGui::GetStyle().FrameRounding);
 					ImGui::InvisibleButton("##ScriptReference", ImVec2(width - height, height));
+					if (!missing && ImGui::BeginDragDropSource())
+					{
+						const uint64_t owner = static_cast<uint64_t>(entity.GetUUID());
+						ImGui::SetDragDropPayload(ScriptOwnerDragDropPayloadID, &owner, sizeof(owner));
+						ImGui::Text("%s (%s)", entity.GetName().c_str(), className.c_str());
+						ImGui::EndDragDropSource();
+					}
 					if (ImGui::IsItemHovered()) {
 						if (assetMetadata) ImGui::SetTooltip("%s\nDouble-click to edit. Use the circle to reveal the script asset.", PathToUTF8(assetMetadata->FilePath).c_str());
 						if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !missing && m_Shared.ScriptOpen) m_Shared.ScriptOpen(entry.ScriptAsset);

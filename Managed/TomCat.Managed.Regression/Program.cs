@@ -1062,6 +1062,9 @@ internal static unsafe partial class Program
         Equal(100.0f, speed.RangeMaximum, "range maximum");
         Check(speed.Id.Length == 32 && speed.Id.All(character =>
             character is >= '0' and <= '9' or >= 'a' and <= 'f'), "stable lower-case FieldID");
+        var target = good.Fields.Single(field => field.Name == "ObjectTarget");
+        Check(target.ReferenceRequired == true && target.ReferenceScripts!.SequenceEqual(["Game.GoodBehaviour"]),
+            "required scene reference preserves its target component");
         ScriptFieldManifest count = good.Fields.Single(field => field.Name == "Count");
         Check(count.FormerNames.SequenceEqual(["_oldCount"]), "former field-name metadata");
         Check(good.Fields.All(field => field.Name != "Speed"), "properties are not serialized");

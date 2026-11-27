@@ -15,6 +15,8 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
 {
     private const string BehaviourMetadataName = "TomCat.MonoBehaviour";
 
+    private static readonly DiagnosticDescriptor InvalidSceneReference = Error("TCG013",
+        "Invalid scene reference", "Field '{0}' requires Entity or GameObject and concrete script component types");
     private static readonly DiagnosticDescriptor MissingAssets = Error("TCG001",
         "ScriptAssets.json is missing",
         "The project must provide exactly one ScriptAssets.json AdditionalFile");
@@ -151,7 +153,7 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
                 continue;
             }
 
-            List<ManifestField> fields = BuildFields(script, assetHandle, context);
+            List<ManifestField> fields = BuildFields(script, behaviour, assetHandle, context);
             manifests.Add(new ManifestScript
             {
                 AssetHandle = assetHandle,
@@ -213,7 +215,7 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
         return result;
     }
 
-    private static List<ManifestField> BuildFields(INamedTypeSymbol script, ulong assetHandle,
+    private static List<ManifestField> BuildFields(INamedTypeSymbol script, INamedTypeSymbol behaviour, ulong assetHandle,
         SourceProductionContext context)
     {
         var fields = new List<ManifestField>();
@@ -250,6 +252,25 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
                 continue;
             }
 
+            var reference = field.GetAttributes().FirstOrDefault(a =>
+                a.AttributeClass?.ToDisplayString() == "TomCat.SceneReferenceAttribute");
+            List<string>? referenceScripts = null;
+            bool? referenceRequired = null;
+            if (reference != null)
+            {
+                var types = reference.ConstructorArguments[0];
+                if (token != "Entity" || types.IsNull || types.Values.Any(t =>
+                    t.Value is not INamedTypeSymbol scriptType || scriptType.IsAbstract ||
+                    scriptType.IsGenericType || !DerivesFrom(scriptType, behaviour)))
+                {
+                    context.ReportDiagnostic(Diagnostic.Create(InvalidSceneReference,
+                        field.Locations.FirstOrDefault(), field.Name));
+                    continue;
+                }
+                referenceScripts = types.Values.Select(t => ((INamedTypeSymbol)t.Value!)
+                    .ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)).ToList();
+                referenceRequired = reference.NamedArguments.Any(a => a.Key == "Required" && a.Value.Value is true);
+            }
             (float? minimum, float? maximum) = ReadRange(field);
             fields.Add(new ManifestField
             {
@@ -263,6 +284,8 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
                 Tooltip = ReadStringArgument(field, "TomCat.TooltipAttribute"),
                 RangeMin = minimum,
                 RangeMax = maximum,
+                ReferenceScripts = referenceScripts,
+                ReferenceRequired = referenceRequired,
                 FormerNames = ReadFormerNames(field)
             });
         }
@@ -496,6 +519,8 @@ public sealed partial class ScriptGenerator : IIncrementalGenerator
         public string? Tooltip { get; init; }
         public float? RangeMin { get; init; }
         public float? RangeMax { get; init; }
+        public List<string>? ReferenceScripts { get; init; }
+        public bool? ReferenceRequired { get; init; }
         public List<string> FormerNames { get; init; } = [];
     }
 

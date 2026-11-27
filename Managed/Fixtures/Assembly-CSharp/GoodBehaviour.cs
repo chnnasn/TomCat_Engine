@@ -29,6 +29,7 @@ public sealed class GoodBehaviour : MonoBehaviour
     // The scene host replaces this null-forgiving CLR default with the invalid
     // zero Entity handle before applying serialized values.
     public Entity Target = null!;
+    [SceneReference(typeof(GoodBehaviour), Required = true)]
     public GameObject? ObjectTarget;
 	public Entity ReparentParent = null!;
     public AssetRef<Texture2DAsset> Texture;

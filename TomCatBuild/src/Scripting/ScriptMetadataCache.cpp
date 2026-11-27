@@ -675,6 +675,16 @@ namespace TomCat {
 					field.Tooltip = OptionalString(fieldValue, "tooltip");
 					field.RangeMinimum = OptionalReal(fieldValue, "rangeMin");
 					field.RangeMaximum = OptionalReal(fieldValue, "rangeMax");
+                    if (fieldValue.Find("referenceRequired"))
+                    {
+                        field.ReferenceRequired = OptionalBoolean(fieldValue, "referenceRequired");
+                        for (const auto& target : Required(fieldValue, "referenceScripts", JsonType::Array).Array)
+                        {
+                            if (target.Type != JsonType::String || target.Text.empty())
+                                throw std::runtime_error("invalid scene reference script type");
+                            field.ReferenceScripts.push_back(target.Text);
+                        }
+                    }
 					field.Hidden = OptionalBoolean(fieldValue, "hidden");
 					if (const JsonValue* defaultValue = fieldValue.Find("defaultValue"))
 						field.DefaultValue = ParseDefaultValue(*defaultValue, field.Type);

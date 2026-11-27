@@ -1748,6 +1748,8 @@ namespace E2E;
 public sealed class LifecycleProbe : MonoBehaviour
 {
     [SerializeField] private int _seed = 3;
+    [SceneReference(typeof(TriggerProbe), Required = true)] public Entity Gate = null!;
+    [SceneReference(typeof(TriggerProbe))] public Entity OptionalGate = null!;
     private void Awake()
     {
         Entity.Tag = _seed == 17 ? "created" : "bad-field";
@@ -2097,6 +2099,11 @@ public sealed class BulletProbe : MonoBehaviour
 			TomCat::Rigidbody2D::BodyType::Dynamic;
 		triggerBody.AddComponent<TomCat::CircleCollider2D>();
 
+		auto& gateFields = lifecycle.GetComponent<TomCat::CSharpScripts>().Scripts.front().Fields;
+		auto gate = std::find_if(gateFields.begin(), gateFields.end(),
+			[](const auto& field) { return field.Name == "Gate"; });
+		Require(gate != gateFields.end(), "scene reference field was missing from metadata");
+		gate->Value = static_cast<uint64_t>(triggerEntityID);
 		const std::filesystem::path scenePath = project->GetAssetPath() / "Main.tomcat";
 		TomCat::SceneSerializer sceneWriter(sourceScene);
 		Require(sceneWriter.Serialize(scenePath),
@@ -2142,6 +2149,16 @@ public sealed class BulletProbe : MonoBehaviour
 			environment.Root / "Build" / "Game.tcpak";
 		Require(assets.CookToPackage(packagePath),
 			"real compiled scripts and their scene did not cook");
+		const auto goodPackage = ReadBytes(packagePath);
+		for (uint64_t invalid : { uint64_t(0), static_cast<uint64_t>(wall.GetUUID()), UINT64_MAX })
+		{
+			gate->Value = invalid;
+			Require(sceneWriter.Serialize(scenePath), "could not save invalid scene reference fixture");
+			Require(!assets.CookToPackage(packagePath), "invalid required script reference was packaged");
+			Require(ReadBytes(packagePath) == goodPackage, "failed validation replaced the good package");
+		}
+		gate->Value = static_cast<uint64_t>(triggerEntityID);
+		Require(sceneWriter.Serialize(scenePath), "could not restore valid scene reference fixture");
 
 		// Build a second package that exercises the complete standalone Player path:
 		// entry Scene -> frame-end transition -> two cross-frame Prefab requests ->

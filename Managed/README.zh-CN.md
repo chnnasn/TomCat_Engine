@@ -350,3 +350,14 @@ GetComponent/AddComponent 当前面向引擎注册组件，不支持任意脚本
 - `ScriptTasks.StartDetached(routine)` / `MonoBehaviour.StartDetachedCoroutine(routine)`：从其他脚本的回调启动本脚本的协程；首步在本脚本的下一次任务派发时以本脚本身份执行。
 - `Vector2`/`Vector3`：`/`、标量左乘、逐分量 `*` `/`、取负、`==`/`!=`、`Length`、`Normalized`、`Dot`、`Distance`、`Lerp`。
 - 序列化字段为委托类型时报 `TCG012`，提示改为 `event`、加 `[NonSerialized]` 或改为非 public；`TCG008` 的消息列出了全部支持的字段类型。
+
+### 校验关卡中的脚本接线
+
+在可序列化的 `Entity` 或 `GameObject` 字段上使用 `SceneReference`。例如，下面的出口必须关联一个带有按钮或拉杆脚本的实体。
+
+```csharp
+[SceneReference(typeof(ButtonController), typeof(LeverController), Required = true)]
+public Entity? ControlTarget;
+```
+
+从 Hierarchy 拖入目标实体，或从 Inspector 的 Script 行拖入目标脚本所属的实体。字段保存场景 UUID。类型列表按具体脚本类型匹配，省略列表时可引用任意实体。默认允许留空。填写了 UUID 后，Inspector 和 cook 都会检查目标是否存在并带有所声明的脚本。cook 会在写包前报告场景路径、源实体、脚本字段和失败原因。

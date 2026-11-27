@@ -588,7 +588,7 @@ namespace TomCat {
 							{ "id", "name", "type", "isPublic", "hidden",
 								"formerNames" },
 							{ "typeName", "header", "tooltip", "rangeMin",
-								"rangeMax", "defaultValue" }, fieldContext, errorMessage))
+								"rangeMax", "defaultValue", "referenceScripts", "referenceRequired" }, fieldContext, errorMessage))
 							return false;
 						const std::string id = field["id"].as<std::string>();
 						const std::string name = field["name"].as<std::string>();
@@ -608,6 +608,22 @@ namespace TomCat {
 								+ typeName + "'";
 							return false;
 						}
+                        if (field["referenceRequired"] || field["referenceScripts"])
+                        {
+                            if (fieldType != ScriptFieldType::Entity || !field["referenceRequired"]
+                                || !field["referenceScripts"].IsSequence())
+                            {
+                                errorMessage = fieldContext + " has invalid scene reference constraints";
+                                return false;
+                            }
+                            (void)field["referenceRequired"].as<bool>();
+                            for (const auto& target : field["referenceScripts"])
+                                if (!IsNonemptyMetadataString(target))
+                                {
+                                    errorMessage = fieldContext + " has an invalid target script type";
+                                    return false;
+                                }
+                        }
 						const bool needsManagedType = fieldType == ScriptFieldType::Enum
 							|| fieldType == ScriptFieldType::AssetRef;
 						const YAML::Node managedType = field["typeName"];
@@ -1635,6 +1651,98 @@ namespace TomCat {
 				runtimeDependencies.emplace(rawHandle);
 			return true;
 		}
+
+        struct SceneReferenceRule
+        {
+            std::string ID, Name;
+            std::vector<std::string> FormerNames, TargetTypes;
+            bool Required;
+        };
+
+        struct SceneReferenceSchema
+        {
+            std::unordered_map<uint64_t, std::string> ClassNames;
+            std::unordered_map<uint64_t, std::vector<SceneReferenceRule>> Fields;
+
+            explicit SceneReferenceSchema(const YAML::Node& manifest)
+            {
+                for (const auto& script : manifest["scripts"])
+                {
+                    const auto handle = script["assetHandle"].as<uint64_t>();
+                    ClassNames.emplace(handle, script["typeName"].as<std::string>());
+                    for (const auto& field : script["fields"])
+                    {
+                        if (!field["referenceRequired"]) continue;
+                        Fields[handle].push_back({
+                            field["id"].as<std::string>(), field["name"].as<std::string>(),
+                            field["formerNames"].as<std::vector<std::string>>(),
+                            field["referenceScripts"].as<std::vector<std::string>>(),
+                            field["referenceRequired"].as<bool>() });
+                    }
+                }
+            }
+
+            bool Validate(const YAML::Node& scene, const std::filesystem::path& path) const
+            {
+                std::unordered_map<uint64_t, YAML::Node> entities;
+                for (const auto& entity : scene["Entities"])
+                    entities.emplace(entity["Entity"].as<uint64_t>(), entity);
+                for (const auto& entity : scene["Entities"])
+                {
+                    if (!entity["CSharpScripts"]) continue;
+                    for (const auto& script : entity["CSharpScripts"]["Scripts"])
+                    {
+                        const auto rules = Fields.find(script["ScriptHandle"].as<uint64_t>());
+                        if (rules == Fields.end()) continue;
+                        for (const auto& rule : rules->second)
+                        {
+                            uint64_t value = 0;
+                            for (const auto& field : script["Fields"])
+                            {
+                                if (field["Type"].as<std::string>() != "Entity") continue;
+                                if (field["FieldID"].as<std::string>() == rule.ID)
+                                {
+                                    value = field["Value"].as<uint64_t>();
+                                    break;
+                                }
+                                const auto name = field["Name"].as<std::string>();
+                                if (name == rule.Name || std::find(rule.FormerNames.begin(),
+                                    rule.FormerNames.end(), name) != rule.FormerNames.end())
+                                    value = field["Value"].as<uint64_t>();
+                            }
+                            if (!value && !rule.Required) continue;
+                            const auto target = entities.find(value);
+                            std::string reason;
+                            if (!value) reason = "required target is unassigned";
+                            else if (target == entities.end()) reason = "missing entity " + std::to_string(value);
+                            else if (!rule.TargetTypes.empty())
+                            {
+                                bool matched = false;
+                                if (target->second["CSharpScripts"])
+                                    for (const auto& attachment : target->second["CSharpScripts"]["Scripts"])
+                                    {
+                                        const auto type = ClassNames.find(attachment["ScriptHandle"].as<uint64_t>());
+                                        if (type != ClassNames.end() && std::find(rule.TargetTypes.begin(),
+                                            rule.TargetTypes.end(), type->second) != rule.TargetTypes.end()) matched = true;
+                                    }
+                                if (!matched)
+                                {
+                                    reason = target->second["Tag"]["Tag"].as<std::string>() + " requires one of:";
+                                    for (const auto& type : rule.TargetTypes) reason += " " + type;
+                                }
+                            }
+                            if (!reason.empty())
+                            {
+                                TC_Core_Error("{0} -> {1} -> {2}.{3}: {4}", PathToUTF8(path),
+                                    entity["Tag"]["Tag"].as<std::string>(), ClassNames.at(rules->first), rule.Name, reason);
+                                return false;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+        };
 
 		bool PrepareSceneBytesForCook(AssetDatabase& database,
 			const std::filesystem::path& assetDirectory,
@@ -4162,6 +4270,16 @@ namespace TomCat {
 				TC_Core_Error("Cannot cook invalid managed payload: {0}", payloadError);
 				return false;
 			}
+            const SceneReferenceSchema references(YAML::Load(managedPayload->ScriptManifestJson));
+            if (!references.Fields.empty())
+            {
+                for (const auto& entry : entries)
+                {
+                    if (entry.RawType != static_cast<uint16_t>(AssetType::Scene)) continue;
+                    const std::string archive(entry.CookedBytes.begin(), entry.CookedBytes.end());
+                    if (!references.Validate(YAML::Load(archive), entry.Path)) return false;
+                }
+            }
 			SourceEntry managedEntry;
 			managedEntry.RawHandle = kManagedPayloadHandle;
 			managedEntry.RawType = static_cast<uint16_t>(AssetType::None);

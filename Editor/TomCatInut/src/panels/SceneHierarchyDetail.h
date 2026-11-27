@@ -427,7 +427,10 @@ namespace HierarchyDetail {
 				{
 					const char* payloadID = field.Type == ScriptFieldType::Entity
 						? SceneEntityDragDropPayloadID : AssetDragDropPayloadID;
-					if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(payloadID))
+					const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(payloadID);
+					if (!payload && !assetField)
+						payload = ImGui::AcceptDragDropPayload(ScriptOwnerDragDropPayloadID);
+					if (payload)
 					{
 						if (payload->DataSize == sizeof(uint64_t))
 						{
@@ -458,6 +461,32 @@ namespace HierarchyDetail {
 					ImGui::EndPopup();
 				}
 
+                if (metadata && metadata->ReferenceRequired.has_value())
+                {
+                    if (changed && shared && shared->Context)
+                        target = shared->Context->FindEntityByUUID(UUID(value));
+                    std::string issue;
+                    if (!value && *metadata->ReferenceRequired) issue = "Required target is unassigned";
+                    else if (value && !target) issue = "Target entity is missing";
+                    else if (target && !metadata->ReferenceScripts.empty() && shared->ScriptMetadata)
+                    {
+                        bool matched = false;
+                        if (target.HasComponent<CSharpScripts>())
+                            for (const auto& script : target.GetComponent<CSharpScripts>().Scripts)
+                            {
+                                const auto type = shared->ScriptMetadata(script.ScriptAsset);
+                                if (type && std::find(metadata->ReferenceScripts.begin(),
+                                    metadata->ReferenceScripts.end(), type->TypeName) != metadata->ReferenceScripts.end())
+                                    matched = true;
+                            }
+                        if (!matched)
+                        {
+                            issue = "Target requires one of:";
+                            for (const auto& type : metadata->ReferenceScripts) issue += " " + type;
+                        }
+                    }
+                    if (!issue.empty()) ImGui::TextWrapped("%s", issue.c_str());
+                }
 				break;
 			}
 		}

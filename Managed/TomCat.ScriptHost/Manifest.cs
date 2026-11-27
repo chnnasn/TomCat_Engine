@@ -115,6 +115,12 @@ public sealed class ScriptFieldManifest
     [JsonPropertyName("rangeMax")]
     public float? RangeMaximum { get; init; }
 
+    [JsonPropertyName("referenceScripts"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? ReferenceScripts { get; init; }
+
+    [JsonPropertyName("referenceRequired"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ReferenceRequired { get; init; }
+
 	[JsonPropertyName("formerNames")]
 	public List<string> FormerNames { get; init; } = [];
 

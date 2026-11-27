@@ -25,6 +25,8 @@ namespace TomCat {
 		std::vector<std::string> FormerNames;
 		std::optional<ScriptFieldValue> DefaultValue;
 		bool Hidden = false;
+		std::optional<bool> ReferenceRequired;
+		std::vector<std::string> ReferenceScripts;
 	};
 
 	struct EditorScriptMetadata
