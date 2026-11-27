@@ -299,6 +299,8 @@ namespace TomCat {
 						automation.RenderDiagnosticsPath = std::move(diagnosticsPath);
 						automation.ScreenshotPath =
 							resolveFromLaunchDirectory(command.ScreenshotPath);
+						automation.AudioDiagnosticsPath = resolveFromLaunchDirectory(command.AudioDiagnosticsPath);
+						automation.FrameTracePath = resolveFromLaunchDirectory(command.FrameTracePath);
 						automation.Frames = command.Frames;
 						SetTestArguments(command.TestArguments);
 						SetFixedFrameDelta(command.FixedDelta);

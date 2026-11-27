@@ -307,6 +307,9 @@ namespace TomCat {
 #else
 #define TC_PROFILE_BEGIN_SESSION(name, filepath)
 #define TC_PROFILE_END_SESSION()
-#define TC_PROFILE_SCOPE(name)
+// Distribution builds keep named stages for opt-in Player frame capture.
+#define TC_DIST_SCOPE_IMPL(name, line) ::TomCat::InstrumentationTimer timer##line(name)
+#define TC_DIST_SCOPE(name, line) TC_DIST_SCOPE_IMPL(name, line)
+#define TC_PROFILE_SCOPE(name) TC_DIST_SCOPE(name, __LINE__)
 #define TC_PROFILE_FUNCTION()
 #endif

@@ -26,7 +26,7 @@ Profiler 默认关闭，不会在后台无限累积数据。
 - 查询环有 4 个槽位。仅在 `GL_QUERY_RESULT_AVAILABLE` 为真后读取结果；忙时跳过该帧，绝不等待 GPU。缺失值在曲线上画为零，但明细明确标记 pending / skipped；不支持查询的平台显示 unavailable。
 - Draws 统计引擎提交的索引/线段绘制，包含一帧内全部场景视口，排除 ImGui 自己的绘制。Submitted elements 是提交的索引数或顶点数，不是去重顶点数。
 
-**Export CPU trace** 将当前有界历史写为 Chrome Trace JSON，可导入兼容的离线 trace 查看器。事件名称进行 JSON 转义；GPU 耗时、帧号、draw 数和丢弃事件数位于帧事件参数中。已有启动参数 `--profile` 的文件采集保持可用；它和面板采集是独立的。Dist 默认关闭 `TC_PROFILE` scope 宏，日常编辑器分析使用 Debug / Release。
+**Export CPU trace** 将当前有界历史写为 Chrome Trace JSON，可导入兼容的离线 trace 查看器。事件名称进行 JSON 转义；GPU 耗时、帧号、draw 数和丢弃事件数位于帧事件参数中。已有启动参数 `--profile` 的文件采集保持可用；它和面板采集是独立的。Dist 保留按需录制的具名阶段，完整函数级采集使用 Debug / Release。
 
 CPU scope 在开始时绑定帧编号，线程安全地提交到这一帧。跨帧才结束的后台 scope 会丢弃，避免归到下一帧；这个面板适合逐帧分析，不替代长任务、所有线程的完整系统级采样器。
 
@@ -102,3 +102,18 @@ Scene 画布的左键、中键和右键开始操作时同步面板焦点，标�
 2026-10-02 Windows Release 单文件包验收：使用 11 项目的测试副本（2550×1440 图片），在操作停止后导出 240 帧。相对上一轮已修复纹理重复加载的 `final.json`，整帧中位数由 27.282 ms 降为 16.795 ms，P95 由 31.235 ms 降为 26.335 ms；`EditorLayer::OnImGuiRender` 中位数由 25.738 ms 降为 0.328 ms，P95 由 28.838 ms 降为 0.452 ms。新采样中 Project / Hierarchy / Profiler 中位数分别为 0.143 / 0.017 / 0.085 ms；Inspector 未选对象，Console 未显示，不能据此推断其重负载性能。Scene 重绘 1 次，纹理构造 0 次。该结果是同机同项目的交互后静止样本，视角经过用户调整，包含 VSync/系统调度影响，不是固定帧率承诺或大场景基准。
 
 本地证据位于 `build/startup-dark-preview/boxed-image-lag/ui-optimized.json` 与 `ui-comparison.json`（忽略目录）。最终包 SHA256：`63D7FC9B1C8E3B2386F83257CD70B454B478119BEC78C45C752ACFEF137334AF`。打包版已验证项目打开、虚拟 Packages 展开及中键 Scene 焦点同步；原生版另已验证列表压力场景、图片拖入与撤销/重做。EditorRecovery、Profiler、ScriptCompiler 回归和 Web 1×/2× DPI 浏览器冒烟通过。
+
+## 独立 Player 的慢帧与音频诊断
+
+在导出的游戏中运行 Player，传入 `--frame-trace trace.json`。正常退出时会保存最近 240 个已完成帧。用相同构建设置、输入和帧数分别采集基线与复测。下面的 `menu-test` 是 wake_up_Tc 项目提供的选关回放。
+
+```powershell
+.\TomCatPlayer.exe --headless --fixed-delta 0.016666667 --test-arg menu-test --frames 240 --frame-trace trace.json --audio-diag audio.json
+python Scripts/Analyze-PlayerFrames.py trace.json --baseline baseline.json --top 5
+```
+
+从引擎仓库运行分析脚本，或指定其绝对路径。它按整帧 CPU 时间排序，并按相同帧号比较两次记录。主线程上的嵌套计时归入最内层的已识别阶段，未覆盖时间单列。GPU 时间仅在后端返回采样时显示。每帧最多记录 512 个作用域，报告会标出丢弃数。
+
+Build Player 成功后，在 **Package contents** 中输入资源名可查看句柄、最终包条目状态和一条实际入包路径。命令行可用 `TomCatCLI build --asset-report` 或 `cook --asset-report` 配合原有项目参数，在输出中检索同样的信息。`AlwaysPackage` 表示显式入包。C# 源文件由程序集承载，不会出现独立源文件条目。
+
+`--audio-diag audio.json` 每 60 帧及正常退出时记录活动场景中的声源。用配置或运行时音频句柄对照构建报告，再查看播放状态、总线 ID、声源音量和混音后的音量。实体及资源 UUID 采用十进制字符串，便于在 JSON 工具中无损查询。

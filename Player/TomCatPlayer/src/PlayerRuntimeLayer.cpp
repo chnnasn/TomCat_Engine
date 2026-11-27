@@ -15,6 +15,8 @@
 #include <TomCat/Renderer/Framebuffer.h>
 
 #include <system_error>
+#include <TomCat/Audio/AudioEngine.h>
+#include <sstream>
 
 namespace TomCat {
 	namespace {
@@ -182,6 +184,8 @@ namespace TomCat {
 		: Layer("PlayerRuntimeLayer"), m_ShowStartupVideo(automation.ShowStartupVideo), m_PackagePath(std::move(packagePath)),
 		m_ViewportWidth(viewportWidth), m_ViewportHeight(viewportHeight),
 		m_RenderDiagnosticsPath(std::move(automation.RenderDiagnosticsPath)),
+		m_AudioDiagnosticsPath(std::move(automation.AudioDiagnosticsPath)),
+		m_FrameTracePath(std::move(automation.FrameTracePath)),
 		m_ScreenshotPath(std::move(automation.ScreenshotPath)),
 		m_ExitAfterFrames(automation.Frames)
 	{
@@ -189,8 +193,11 @@ namespace TomCat {
 
 	void PlayerRuntimeLayer::OnAttach()
 	{
-		if (const char* path = std::getenv("TC_PLAYER_FRAME_TRACE"); path && *path)
-			FrameProfiler::Get().SetRecording(true);
+		if (m_FrameTracePath.empty())
+            if (const char* path = std::getenv("TC_PLAYER_FRAME_TRACE"); path && *path)
+                m_FrameTracePath = UTF8ToPath(path);
+        if (!m_FrameTracePath.empty())
+            FrameProfiler::Get().SetRecording(true);
 		AssetManager& assets = AssetManager::Get();
 		if (assets.GetCookedPackagePath() != m_PackagePath && !assets.MountCookedPackage(m_PackagePath))
 		{
@@ -327,11 +334,12 @@ namespace TomCat {
 
 	void PlayerRuntimeLayer::OnDetach()
 	{
-		if (const char* path = std::getenv("TC_PLAYER_FRAME_TRACE"); path && *path)
+		if (!m_AudioDiagnosticsPath.empty()) WriteAudioDiagnostics();
+		if (!m_FrameTracePath.empty())
 		{
 			FrameProfiler::Get().SetRecording(false);
-			if (!FrameProfiler::Get().ExportTrace(path))
-				TC_Core_Warn("Could not export Player frame trace to {0}", path);
+			if (!FrameProfiler::Get().ExportTrace(m_FrameTracePath))
+				TC_Core_Warn("Could not export Player frame trace to {0}", PathToUTF8(m_FrameTracePath));
 		}
 		if (!m_RenderDiagnosticsPath.empty())
 		{
@@ -386,6 +394,7 @@ namespace TomCat {
         }
 		if (!m_RenderDiagnosticsPath.empty() && (m_Frame % 60) == 0)
 			WriteRenderDiagnostics();
+		if (!m_AudioDiagnosticsPath.empty() && (m_Frame % 60) == 0) WriteAudioDiagnostics();
 		++m_Frame;
 		if (m_ExitAfterFrames != 0 && m_Frame >= m_ExitAfterFrames
 			&& m_SceneManager)
@@ -540,6 +549,41 @@ namespace TomCat {
 		return FileSystem::WriteFileAtomically(m_ScreenshotPath, std::string_view(
 			reinterpret_cast<const char*>(png.data()), png.size()), error);
 	}
+
+    void PlayerRuntimeLayer::WriteAudioDiagnostics()
+    {
+        const auto scene = m_SceneManager ? m_SceneManager->GetActiveScene() : nullptr;
+        if (!scene) return;
+        auto& audio = AudioEngine::Get();
+        std::ostringstream out;
+        out.imbue(std::locale::classic());
+        out << "{\"frame\":" << m_Frame << ",\"sources\":[";
+        bool first = true;
+        for (const UUID id : scene->GetEntityOrder())
+        {
+            auto entity = scene->FindEntityByUUID(id);
+            if (!entity || !entity.HasComponent<AudioSource>()) continue;
+            const auto& source = entity.GetComponent<AudioSource>();
+            const auto state = audio.GetState(source.RuntimeVoice);
+            if (!first) out << ',';
+            first = false;
+            out << "{\"entity\":\"" << static_cast<uint64_t>(id)
+                << "\",\"configuredClip\":\"" << static_cast<uint64_t>(source.Clip)
+                << "\",\"playingClip\":\"" << static_cast<uint64_t>(source.RuntimeClipHandle)
+                << "\",\"state\":\"" << (state == AudioPlaybackState::Playing ? "playing" :
+                    state == AudioPlaybackState::Paused ? "paused" : "stopped")
+                << "\",\"bus\":" << (source.Bus == UINT32_MAX ? source.MixerGroup : source.Bus)
+                << ",\"sourceVolume\":" << source.Volume
+                << ",\"effectiveVolume\":" << audio.GetVoiceVolume(source.RuntimeVoice) << '}';
+        }
+        out << "]}";
+        std::string error;
+        if (!FileSystem::WriteFileAtomically(m_AudioDiagnosticsPath, out.str(), error))
+        {
+            TC_Core_Warn("Audio diagnostics could not be written: {0}", error);
+            m_AudioDiagnosticsPath.clear();
+        }
+    }
 
 	void PlayerRuntimeLayer::WriteRenderDiagnostics()
 	{

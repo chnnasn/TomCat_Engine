@@ -75,6 +75,7 @@ namespace TomCat {
 				continue;
 			}
 			const bool takesValue = name == "--package" || name == "--render-diag"
+				|| name == "--audio-diag" || name == "--frame-trace"
 				|| name == "--screenshot" || name == "--frames"
 				|| name == "--fixed-delta" || name == "--test-arg";
 			if (!takesValue || index + 1 >= args.Count)
@@ -128,7 +129,8 @@ namespace TomCat {
 			}
 			std::filesystem::path& target = name == "--package" ? result.PackagePath
 				: name == "--render-diag" ? result.RenderDiagnosticsPath
-				: result.ScreenshotPath;
+				: name == "--audio-diag" ? result.AudioDiagnosticsPath
+				: name == "--frame-trace" ? result.FrameTracePath : result.ScreenshotPath;
 			if (!target.empty())
 			{
 				result.Error = std::string(name) + " was given more than once";
@@ -204,6 +206,8 @@ namespace TomCat {
 			"Run options (combine with --package; any order):\n"
 			"  --render-diag <file.json>   Write 2D render diagnostics about once a second\n"
 			"  --screenshot <out.png>      Save frame --frames N (default 60) as PNG, then exit\n"
+			"  --audio-diag <file.json>    Snapshot source clip, playback state, bus and volume\n"
+			"  --frame-trace <file.json>   Export the last 240 CPU/GPU frames on exit\n"
 			"  --frames <N>                Exit after N frames\n"
 			"  --headless                  Render into a hidden window (no focus or occlusion)\n"
 			"  --fixed-delta <seconds>     Advance every frame by a fixed time step\n"

@@ -2636,6 +2636,7 @@ namespace TomCat {
 	size_t AssetManager::PumpTexturePublishes(uint32_t maximumUploads,
         uint64_t maximumUploadBytes, double maximumMilliseconds)
     {
+        TC_PROFILE_SCOPE("Texture upload queue");
         if (!maximumUploads || !maximumUploadBytes || !std::isfinite(maximumMilliseconds) || maximumMilliseconds <= 0) return 0;
         const auto start = std::chrono::steady_clock::now();
         uint64_t selectedUploadBytes = 0;

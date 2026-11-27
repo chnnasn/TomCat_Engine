@@ -1145,6 +1145,7 @@ namespace TomCat {
 		std::string_view utf8, float fontSize, float maximumWidth,
 		TextAlignment alignment, float lineSpacing)
 	{
+		TC_PROFILE_SCOPE("Text layout");
 		TextLayoutResult result;
 		if (atlas.PixelHeight <= 0.0f || !Finite(fontSize) || fontSize <= 0.0f
 			|| !Finite(maximumWidth) || maximumWidth < 0.0f

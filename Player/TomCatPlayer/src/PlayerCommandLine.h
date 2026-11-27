@@ -25,6 +25,8 @@ namespace TomCat {
 		// Optional --render-diag <file.json>: the latest 2D scene collection
 		// counters and draw order, rewritten atomically about once a second.
 		std::filesystem::path RenderDiagnosticsPath;
+		std::filesystem::path AudioDiagnosticsPath;
+		std::filesystem::path FrameTracePath;
 		// --screenshot <out.png>: write the rendered frame --frames N (default
 		// 60) as PNG, then exit. --frames alone exits after N frames.
 		std::filesystem::path ScreenshotPath;

@@ -79,6 +79,11 @@ namespace TomCat {
 		bool SetMixerGroup(AudioVoiceHandle voice, AudioMixerGroup group);
 		AudioPlaybackState GetState(AudioVoiceHandle voice) const;
 		double GetPlaybackSeconds(AudioVoiceHandle voice) const;
+        float GetVoiceVolume(AudioVoiceHandle voice) const
+        {
+            const auto found = m_Voices.find(voice);
+            return found == m_Voices.end() ? 0.0f : EffectiveVolume(found->second);
+        }
 
 		bool SetMixerVolume(AudioMixerGroup group, float volume);
         bool ConfigureBusGraph(std::string_view document,std::string& error);

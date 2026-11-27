@@ -16,6 +16,8 @@ namespace TomCat {
 	struct PlayerAutomationOptions
 	{
 		std::filesystem::path RenderDiagnosticsPath;
+		std::filesystem::path AudioDiagnosticsPath;
+		std::filesystem::path FrameTracePath;
 		// Captured after frame Frames renders; the Player then exits.
 		std::filesystem::path ScreenshotPath;
 		// 0 runs until the game quits.
@@ -52,6 +54,7 @@ namespace TomCat {
         bool OnWindowResize(WindowResizeEvent& event);
 		void Fail(const std::string& message, int exitCode = 5);
 		void WriteRenderDiagnostics();
+		void WriteAudioDiagnostics();
 		bool WriteScreenshot(std::string& error);
 
 	private:
@@ -60,6 +63,8 @@ namespace TomCat {
 		uint32_t m_ViewportHeight = 720;
 		Scope<SceneManager> m_SceneManager;
 		std::filesystem::path m_RenderDiagnosticsPath;
+		std::filesystem::path m_AudioDiagnosticsPath;
+		std::filesystem::path m_FrameTracePath;
 		std::filesystem::path m_ScreenshotPath;
 		uint32_t m_ExitAfterFrames = 0;
 		uint64_t m_Frame = 0;
