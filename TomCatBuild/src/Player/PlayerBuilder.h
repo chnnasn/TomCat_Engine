@@ -31,6 +31,7 @@ namespace TomCat {
 		std::filesystem::path OutputDirectory;
 		std::filesystem::path PlayerExecutable;
 		std::string Message;
+		std::vector<std::string> AssetReport;
 	};
 
 	class PlayerBuilder final

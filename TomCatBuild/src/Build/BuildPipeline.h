@@ -65,6 +65,7 @@ namespace TomCat::Build {
 		AssetHandle EntryScene = AssetHandle(0);
 		// Package only. Empty selects <project>/Build/Game.tcpak.
 		std::filesystem::path PackagePath;
+        bool IncludeAssetReport = false;
 		// Player only. Empty selects PlayerBuilder::FindDefaultTemplateDirectory().
 		std::filesystem::path TemplateDirectory;
 	};
@@ -77,6 +78,7 @@ namespace TomCat::Build {
 		std::filesystem::path OutputPath;
 		std::filesystem::path PlayerExecutable;  // Player only
 		std::string Message;                     // success message for display
+		std::vector<std::string> AssetReport;
 	};
 
 	// The entry scene must be set and listed as an enabled scene.

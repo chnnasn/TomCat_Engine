@@ -261,7 +261,7 @@ namespace TomCat {
 		// was initialized without a Project.
 		bool CookToPackage(const std::filesystem::path& packagePath);
 		bool CookToPackage(const std::filesystem::path& packagePath,
-			AssetHandle startSceneHandle);
+			AssetHandle startSceneHandle, std::vector<std::string>* inclusionReport = nullptr);
 		// Tests and non-Editor authoring tools may provide an already validated
 		// Release build explicitly. Normal project cooks discover last-good.json.
 		bool SetManagedCookPayload(std::vector<uint8_t> assembly,

@@ -59,6 +59,7 @@ namespace {
 		std::filesystem::path OutputPath;
 		std::filesystem::path TemplatePath;
 		TomCat::CLI::PakInspectOptions Pak;
+        bool ShowAssetReport = false;
         TomCat::ScriptBuildProfile Profile = TomCat::ScriptBuildProfile::Production;
 		std::string Error;
 	};
@@ -75,6 +76,7 @@ namespace {
 			<< "every entry, scene entities with components and sprite references, and\n"
 			<< "texture/sprite descriptors. --dump-textures writes each texture as PNG\n"
 			<< "(Sprite slices cropped); --dump-scenes writes the cooked scene YAML.\n\n"
+			<< "Use --asset-report with cook or build to print package membership and inclusion paths.\n"
 			<< "Both commands compile and validate the current C# sources first. Projects\n"
 			<< "and assets must use the current format; older formats are rejected.\n";
 	}
@@ -138,6 +140,7 @@ namespace {
 				continue;
 			}
 			if (option == "--development") result.Profile = TomCat::ScriptBuildProfile::Development;
+            else if (option == "--asset-report") result.ShowAssetReport = true;
             else if (option == "--project")
 			{
 				const auto parsed = value();
@@ -284,10 +287,13 @@ namespace {
 		request.EntryScene = entryScene;
 		request.PackagePath = options.OutputPath;
 		request.TemplateDirectory = options.TemplatePath;
+        request.IncludeAssetReport = options.ShowAssetReport;
 		const TomCat::Build::CookOrBuildResult result =
 			TomCat::Build::CookOrBuild(request, compiler, std::move(candidate));
 		if (!result.Succeeded)
 			return fail(result.Error);
+		if (options.ShowAssetReport)
+            for (const auto& row : result.AssetReport) std::cout << row << '\n';
 		std::cout << result.Message << '\n';
 		return 0;
 	}

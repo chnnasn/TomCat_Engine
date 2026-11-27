@@ -168,6 +168,7 @@ namespace TomCat::Build {
 				? request.ProjectInstance->GetProjectDirectory() / "Build" / "Game.tcpak"
 				: request.PackagePath;
 			AssetManager& assets = AssetManager::Get();
+			CookOrBuildResult result;
 			bool cooked = false;
 			{
 				if (!assets.SetManagedCookPayload(std::move(candidate.Assembly),
@@ -176,12 +177,12 @@ namespace TomCat::Build {
 					return FailResult(BuildFailure::Cook,
 						"the fresh managed cook payload was rejected.");
 				CookPayloadGuard payloadGuard{ assets };
-				cooked = assets.CookToPackage(output, request.EntryScene);
+				cooked = assets.CookToPackage(output, request.EntryScene,
+                    request.IncludeAssetReport ? &result.AssetReport : nullptr);
 			}
 			if (!cooked)
 				return FailResult(BuildFailure::Cook, "cook failed. See the preceding diagnostics.");
 
-			CookOrBuildResult result;
 			result.Succeeded = true;
 			result.OutputPath = output;
 			result.Message = "Cook succeeded: " + PathToUTF8(output);
@@ -202,7 +203,7 @@ namespace TomCat::Build {
 		{
 			return IsCandidateCurrent(compiler, build);
 		};
-		const PlayerBuildResult player = PlayerBuilder::Build(std::move(playerRequest));
+		PlayerBuildResult player = PlayerBuilder::Build(std::move(playerRequest));
 		if (!player.Succeeded)
 			return FailResult(BuildFailure::PlayerBuild, player.Message);
 
@@ -211,6 +212,7 @@ namespace TomCat::Build {
 		result.OutputPath = player.OutputDirectory;
 		result.PlayerExecutable = player.PlayerExecutable;
 		result.Message = player.Message;
+		result.AssetReport = std::move(player.AssetReport);
 		return result;
 	}
 

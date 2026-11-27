@@ -559,6 +559,15 @@ using namespace EditorLayerDetail;
 		else if (buildAndRunPressed)
 			BuildPlayer(true);
 
+        if (m_BuildState.PlayerBuildSucceeded && ImGui::CollapsingHeader("Package contents"))
+        {
+            static ImGuiTextFilter filter;
+            filter.Draw("Search assets");
+            ImGui::BeginChild("PackageReport", ImVec2(0, 140), true, ImGuiWindowFlags_HorizontalScrollbar);
+            for (const auto& row : m_BuildState.AssetReport)
+                if (filter.PassFilter(row.c_str())) ImGui::TextUnformatted(row.c_str());
+            ImGui::EndChild();
+        }
 		if (!m_BuildState.PlayerBuildStatus.empty())
 		{
 			ImGui::Spacing();
@@ -655,6 +664,7 @@ using namespace EditorLayerDetail;
 
 		m_BuildState.PlayerBuildSucceeded = true;
         m_BuildState.PlayerOutputDirectory = PathToUTF8(result.OutputPath);
+        m_BuildState.AssetReport = result.AssetReport;
 		m_BuildState.PlayerBuildStatus = result.Message;
 		m_Layer.m_ConsolePanel.Push(ConsoleMessageSeverity::Info,
 			m_BuildState.PlayerBuildStatus, "Player Build");

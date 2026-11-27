@@ -790,7 +790,7 @@ namespace TomCat {
 				std::move(request.ManagedPdb)))
 				return failStaged("The fresh managed payload was rejected.");
 			PayloadGuard payloadGuard{ assets };
-			cooked = assets.CookToPackage(runtimeRoot / "Game.tcpak", request.EntryScene);
+			cooked = assets.CookToPackage(runtimeRoot / "Game.tcpak", request.EntryScene, &result.AssetReport);
 		}
 		if (!cooked)
 			return failStaged("Cooking Game.tcpak failed. See preceding diagnostics.");

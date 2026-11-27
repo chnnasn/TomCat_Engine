@@ -7,6 +7,7 @@
 #include "TomCat/Core/Base.h"
 
 #include <string>
+#include <vector>
 
 namespace TomCat {
 
@@ -18,6 +19,7 @@ namespace TomCat {
 		bool BuildSettingsSucceeded = false;
 		std::string PlayerBuildStatus;
         std::string PlayerOutputDirectory;
+        std::vector<std::string> AssetReport;
 		bool PlayerBuildSucceeded = false;
         bool DevelopmentBuild = false;
 	};

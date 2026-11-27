@@ -3567,8 +3567,9 @@ namespace TomCat {
 	}
 
 	bool AssetManager::CookToPackage(const std::filesystem::path& packagePath,
-		AssetHandle startSceneHandle)
+		AssetHandle startSceneHandle, std::vector<std::string>* inclusionReport)
 	{
+		if (inclusionReport) inclusionReport->clear();
 		if (!m_RegistryInitialized || IsCookedPackageMounted() || packagePath.empty())
 			return false;
 		const std::filesystem::path assetDirectory = m_Registry.GetAssetDirectory();
@@ -3700,15 +3701,20 @@ namespace TomCat {
 		std::unordered_set<uint64_t> referencedScriptHandles;
 		std::deque<AssetHandle> pendingAssets;
 		std::unordered_set<uint64_t> queuedAssets;
-		auto enqueueAsset = [&](AssetHandle handle)
+        struct Inclusion { uint64_t Parent; const char* Reason; };
+        std::unordered_map<uint64_t, Inclusion> inclusions;
+        auto enqueueAsset = [&](AssetHandle handle, uint64_t parent, const char* reason)
 		{
 			const uint64_t rawHandle = static_cast<uint64_t>(handle);
 			if (rawHandle != 0 && queuedAssets.emplace(rawHandle).second)
-				pendingAssets.push_back(handle);
+            {
+                pendingAssets.push_back(handle);
+                if (inclusionReport) inclusions.emplace(rawHandle, Inclusion{parent, reason});
+            }
 		};
 		for (AssetHandle scene : packageBuildScenes)
-			enqueueAsset(scene);
-		enqueueAsset(packagePlayerSettings.Icon);
+			enqueueAsset(scene, 0, "Build scene");
+		enqueueAsset(packagePlayerSettings.Icon, 0, "Player icon");
 		// Assets marked AlwaysPackage are explicit roots of the closure.
 		for (const AssetMetadata& metadata : registryAssets)
 		{
@@ -3722,9 +3728,9 @@ namespace TomCat {
 					static_cast<uint64_t>(metadata.Handle), PathToUTF8(metadata.FilePath));
 				return false;
 			}
-			enqueueAsset(metadata.Handle);
+			enqueueAsset(metadata.Handle, 0, "AlwaysPackage");
 			for (const AssetSubAsset& child : metadata.SubAssets)
-				enqueueAsset(child.Handle);
+				enqueueAsset(child.Handle, static_cast<uint64_t>(metadata.Handle), "Sprite slice");
 		}
 		// Standalone AssetManager users have no build-scene graph. Preserve that
 		// authoring utility mode by treating its current runtime assets as roots;
@@ -3736,7 +3742,7 @@ namespace TomCat {
 				if (metadata.Type != AssetType::None
 					&& metadata.Type != AssetType::CSharpScript && !metadata.IsMissing
 					&& !IsAuthoringOnlyCookPath(metadata.FilePath))
-					enqueueAsset(metadata.Handle);
+					enqueueAsset(metadata.Handle, 0, "Standalone cook");
 			}
 		}
 
@@ -3895,7 +3901,7 @@ namespace TomCat {
 			if (m_Database.GetSubAssetSnapshot(handle, slicedOwner, slicedSprite))
 			{
 				for (AssetHandle dependency : dependencySnapshot.Dependencies)
-					enqueueAsset(dependency);
+					enqueueAsset(dependency, rawHandle, "Dependency");
 
 				if (slicedOwner.IsMissing
 					|| static_cast<uint64_t>(slicedOwner.Handle) == 0
@@ -3920,7 +3926,7 @@ namespace TomCat {
 					return false;
 				}
 				for (AssetHandle dependency : ownerDependencySnapshot.Dependencies)
-					enqueueAsset(dependency);
+					enqueueAsset(dependency, rawHandle, "Dependency");
 
 				const std::optional<AssetMetadata> ownerByPath =
 					m_Database.GetMetadataSnapshot(slicedOwner.FilePath);
@@ -4087,7 +4093,7 @@ namespace TomCat {
 					&& dependencyMetadata
 					&& dependencyMetadata->Type == AssetType::CSharpScript)
 					continue;
-				enqueueAsset(dependency);
+				enqueueAsset(dependency, rawHandle, "Dependency");
 			}
 			const std::filesystem::path source =
 				(assetDirectory / metadata.FilePath).lexically_normal();
@@ -4229,7 +4235,7 @@ namespace TomCat {
 			observation.SourceSHA256 = std::move(cookedSourceSHA256);
 			observations.push_back(std::move(observation));
 			for (uint64_t dependency : discoveredDependencies)
-				enqueueAsset(AssetHandle(dependency));
+				enqueueAsset(AssetHandle(dependency), rawHandle, "Dependency");
 		}
 
 		if (!modulePayload.empty())
@@ -4642,6 +4648,39 @@ namespace TomCat {
 				PathToUTF8(packagePath), installError);
 			return false;
 		}
+        if (inclusionReport)
+        {
+            std::unordered_map<uint64_t, std::string> paths;
+            for (const auto& asset : registryAssets)
+            {
+                const auto path = PathToUTF8(asset.FilePath);
+                paths.emplace(static_cast<uint64_t>(asset.Handle), path);
+                for (const auto& child : asset.SubAssets)
+                    paths.emplace(static_cast<uint64_t>(child.Handle), path + "#" + child.Name);
+            }
+            std::unordered_set<uint64_t> packed;
+            for (const auto& entry : entries) packed.insert(entry.RawHandle);
+            for (const auto& [id, path] : paths)
+            {
+                std::string row = path + " [" + std::to_string(id) + "]  ";
+                if (!packed.contains(id))
+                    row += "No separate package entry";
+                else
+                {
+                    row += "Packaged";
+                    for (auto it = inclusions.find(id); it != inclusions.end(); it = inclusions.find(it->second.Parent))
+                    {
+                        const auto parent = it->second.Parent;
+                        row += " <- ";
+                        if (!parent) { row += it->second.Reason; break; }
+                        const auto name = paths.find(parent);
+                        row += name == paths.end() ? std::to_string(parent) : name->second;
+                    }
+                }
+                inclusionReport->push_back(std::move(row));
+            }
+            std::sort(inclusionReport->begin(), inclusionReport->end());
+        }
 		return true;
 	}
 
