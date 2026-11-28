@@ -4,7 +4,7 @@
 
 ## 当前基线
 
-- 产品版本 **0.6.0**，版本常量以 [Version.h](../TomCat/src/TomCat/Core/Version.h) 为准。
+- 产品版本 **0.7.0**，版本常量以 [Version.h](../TomCat/src/TomCat/Core/Version.h) 为准。
 - `main` 是功能集成主线。历史整理前代码基线为 `b04d81d8`，恢复发布关联后对应 `17b11340`（首次整理为 `65f38cfb`）；这些节点的 Git tree 完全相同。记录与发布关联整理完成于 `dc684bc8`，随后 [9a9a303a](https://github.com/chnnasn/TomCat_Engine/commit/9a9a303a56893d50eb02a6280603324a6741f9cc) 合入 Linux 初步支持，已包含源码增量。
 - 六个发布标签已重新关联到主线可达的等价发布快照，源码树与原版本一致，Release 附件保留。不能用版本号相同推断当前 `main` 与 `v0.6.0` 内容相同。提交映射、标签目标与同步方式见[项目演进](PROJECT_HISTORY.zh-CN.md#发布标签)。
 - Windows x64 使用 Vulkan 1.2 优先、OpenGL 4.6 回退。Linux x86_64 支持 Ubuntu 24.04、X11/XWayland 下的 Vulkan 1.2 和 OpenGL 4.5+。WebGL2/.NET browser-wasm 是实验目标。主线使用 Box2D 和 EnTT，专项分支能力单独记录。

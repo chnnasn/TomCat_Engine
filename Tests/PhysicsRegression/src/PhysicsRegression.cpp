@@ -812,7 +812,7 @@ namespace {
 		const std::string validDocument = ReadTextFile(project->GetPlayerSettingsPath());
 		Require(validDocument.find("\"schemaVersion\": 1") != std::string::npos
 			&& validDocument.find("\"productName\": \"Moon Rabbit\"") != std::string::npos
-			&& validDocument.find("\"windowMode\": \"Borderless\"") != std::string::npos
+			&& validDocument.find("\"windowMode\": \"FullscreenWindow\"") != std::string::npos
 			&& validDocument.find("\"save\": \"Data/Saves\"") != std::string::npos,
 			"PlayerSettings writer did not emit its strict versioned JSON schema");
 		auto roundtrip = TomCat::Project::Load(projectPath);
