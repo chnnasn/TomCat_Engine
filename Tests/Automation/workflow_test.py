@@ -249,7 +249,7 @@ public sealed class AutomationProbe : MonoBehaviour
     result = c.call('build_player', development=False)
     output = Path(result['output_directory'])
     exe = next(output.glob('*.exe'))
-    package = next(output.glob('*.tcpak'))
+    package = next(output.rglob('*.tcpak'))
     subprocess.run([str(exe), '--validate-package', str(package)], cwd=output, timeout=120, check=True)
     print('PASS create -> author -> compile -> attach -> prefab -> save -> input/steps/assert -> stop -> build', result, flush=True)
 
