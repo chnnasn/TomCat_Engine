@@ -17,10 +17,17 @@ if (-not (Test-Path -LiteralPath $dotnet -PathType Leaf)) {
     throw "The .NET SDK source root has no dotnet.exe: $sourceFull"
 }
 if (-not $SdkVersion) {
-    $SdkVersion = (& $dotnet --version 2>&1 | Select-Object -First 1).Trim()
+    $sdkOutput = @(& $dotnet --list-sdks 2>&1)
     if ($LASTEXITCODE -ne 0) {
         throw "Could not query the SDK version from $dotnet"
     }
+    $dotNet10Versions = @($sdkOutput | ForEach-Object {
+        if ($_ -match '^\s*(10\.[0-9]+\.[0-9A-Za-z.-]+)\s+\[') { $Matches[1] }
+    } | Sort-Object { [version]($_ -replace '-.*$', '') } -Descending)
+    if ($dotNet10Versions.Count -eq 0) {
+        throw "Could not find a .NET 10 SDK in $sourceFull"
+    }
+    $SdkVersion = $dotNet10Versions[0]
 }
 if ($SdkVersion -notmatch '^10\.[0-9]+\.[0-9A-Za-z.-]+$') {
     throw "TomCat Editor releases require a pinned .NET 10 SDK, got '$SdkVersion'."
