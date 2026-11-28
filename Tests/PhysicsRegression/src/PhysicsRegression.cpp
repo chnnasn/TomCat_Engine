@@ -847,7 +847,7 @@ namespace {
 		Require(TomCat::Project::Load(projectPath) == nullptr,
 			"strict PlayerSettings loader accepted an unknown top-level field");
 		std::string wrongMode = validDocument;
-		const std::string modeToken = "\"windowMode\": \"Borderless\"";
+		const std::string modeToken = "\"windowMode\": \"FullscreenWindow\"";
 		const std::size_t modePosition = wrongMode.find(modeToken);
 		Require(modePosition != std::string::npos,
 			"could not locate PlayerSettings window mode token");
